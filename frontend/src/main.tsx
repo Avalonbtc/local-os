@@ -38,6 +38,7 @@ import { WalletsPage } from "./features/wallets";
 import { FlightsPage } from "./features/flight_sheets";
 import { BmcPage } from "./features/bmc";
 import { BiosPage } from "./features/bios";
+import { OverclockPage } from "./features/overclock";
 import { SettingsPage } from "./features/settings";
 import { TerminalsPage } from "./features/terminal";
 import "./styles.css";
@@ -52,6 +53,7 @@ const farmTabs = [
   ["/machines", "矿机"],
   ["/wallets", "钱包"],
   ["/flight-sheets", "飞行表"],
+  ["/overclocking", "超频"],
   ["/bmc", "BMC 设备"],
   ["/bios", "BIOS"],
   ["/terminals", "多机终端"],
@@ -226,6 +228,7 @@ function Root() {
           <Route path="/wallets" element={<WalletsPage />} />
           <Route path="/flight-sheets" element={<FlightsPage />} />
           <Route path="/bmc" element={<BmcPage />} />
+          <Route path="/overclocking" element={<OverclockPage />} />
           <Route path="/bios" element={<BiosPage />} />
           <Route path="/bios/:id" element={<BiosPage />} />
           <Route path="/settings" element={<SettingsPage />} />

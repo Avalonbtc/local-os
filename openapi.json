@@ -134,6 +134,43 @@
             "type": "object"
           },
           {
+            "description": "Applies overclocking on the rig and keeps it for re-application after reboot.",
+            "properties": {
+              "config": {
+                "$ref": "#/components/schemas/GpuOcConfig"
+              },
+              "kind": {
+                "const": "gpu_oc",
+                "type": "string"
+              },
+              "profile_name": {
+                "default": null,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "config"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Restores driver defaults and forgets the saved overclock.",
+            "properties": {
+              "kind": {
+                "const": "gpu_oc_reset",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
             "properties": {
               "kind": {
                 "const": "adopt",
@@ -228,6 +265,119 @@
           "releases"
         ],
         "title": "AdapterDescription",
+        "type": "object"
+      },
+      "AmdOc": {
+        "properties": {
+          "core_clock": {
+            "default": [],
+            "description": "CORE_CLOCK, MHz.",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "core_state": {
+            "default": [],
+            "description": "CORE_STATE: DPM state to set and pin, 0 = auto.",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "core_vddc": {
+            "default": [],
+            "description": "CORE_VDDC, mV.",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "fan": {
+            "default": [],
+            "description": "FAN: percent, 0 = automatic.",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "mem_clock": {
+            "default": [],
+            "description": "MEM_CLOCK, MHz.",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "mem_state": {
+            "default": [],
+            "description": "MEM_STATE, 0 = auto.",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "mvdd": {
+            "default": [],
+            "description": "MVDD, mV (PowerPlay table; accepted for HiveOS import, not written in this release).",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "pl": {
+            "default": [],
+            "description": "PL: power limit in W, 0 = driver default.",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "ref": {
+            "default": [],
+            "description": "REF: memory refresh via amdmemtweak when it is installed on the rig.",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "soc_clk": {
+            "default": [],
+            "description": "SOCCLK, MHz (PowerPlay table; not written in this release).",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "soc_vdd_max": {
+            "default": [],
+            "description": "SOCVDDMAX, mV (PowerPlay table; not written in this release).",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "vddci": {
+            "default": [],
+            "description": "VDDCI, mV (PowerPlay table; not written in this release).",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
         "type": "object"
       },
       "AuditEvent": {
@@ -456,13 +606,22 @@
         "type": "object"
       },
       "CatalogKind": {
-        "enum": [
-          "coin",
-          "wallet",
-          "pool",
-          "miner"
-        ],
-        "type": "string"
+        "oneOf": [
+          {
+            "enum": [
+              "coin",
+              "wallet",
+              "pool",
+              "miner"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "oc_profile",
+            "description": "HiveOS-style overclocking template; `data` is a [`GpuOcConfig`].",
+            "type": "string"
+          }
+        ]
       },
       "Credential": {
         "oneOf": [
@@ -605,6 +764,32 @@
           "wallet_id",
           "miner"
         ],
+        "type": "object"
+      },
+      "GpuOcConfig": {
+        "description": "Overclocking in HiveOS's own terms (`nvidia-oc.conf` / `amd-oc.conf`). Every list holds one\nvalue per card of that vendor in PCI bus order; a shorter list repeats its last value, so a\nsingle value applies to all cards, and an empty list leaves the setting untouched.",
+        "properties": {
+          "amd": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AmdOc"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nvidia": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NvidiaOc"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
         "type": "object"
       },
       "Job": {
@@ -1106,6 +1291,54 @@
           "url",
           "executable"
         ],
+        "type": "object"
+      },
+      "NvidiaOc": {
+        "properties": {
+          "clock": {
+            "default": [],
+            "description": "CLOCK: core offset in MHz; a value above 500 is a locked core clock.",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "fan": {
+            "default": [],
+            "description": "FAN: percent, 0 = automatic.",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "mem": {
+            "default": [],
+            "description": "MEM: memory offset in MHz, Linux/HiveOS scale (twice the Windows Afterburner value).",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "plimit": {
+            "default": [],
+            "description": "PLIMIT: power limit in W, 0 = driver default.",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "running_delay": {
+            "default": 0,
+            "description": "RUNNING_DELAY: seconds to wait after boot before re-applying, like HiveOS.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
         "type": "object"
       },
       "Object": {

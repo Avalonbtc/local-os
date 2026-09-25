@@ -40,6 +40,7 @@ import {
   JsonView,
 } from "../../shared/ui";
 import { TerminalPane } from "../terminal";
+import { WorkerOverclock } from "../overclock";
 import {
   MessagesFeed,
   MinerLogViewer,
@@ -290,6 +291,11 @@ export function MachineDetail() {
                 />
               </>
             ),
+          },
+          {
+            key: "overclock",
+            label: "超频",
+            children: <WorkerOverclock machine={machine} />,
           },
           {
             key: "sensors",

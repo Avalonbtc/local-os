@@ -38,6 +38,11 @@ impl App {
                     return Err(Error::Validation("至少填写一个矿池地址".into()));
                 }
             }
+            CatalogKind::OcProfile => {
+                serde_json::from_value::<GpuOcConfig>(input.data.clone())
+                    .map_err(|e| Error::Validation(format!("超频参数格式无效：{e}")))?
+                    .validate()?;
+            }
             CatalogKind::Miner => {
                 if input.data["adapter"].as_str().is_none() {
                     input.data["adapter"] = "hive-custom".into();

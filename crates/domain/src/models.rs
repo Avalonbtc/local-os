@@ -211,6 +211,8 @@ pub enum CatalogKind {
     Wallet,
     Pool,
     Miner,
+    /// HiveOS-style overclocking template; `data` is a [`GpuOcConfig`].
+    OcProfile,
 }
 impl CatalogKind {
     pub fn parse(s: &str) -> crate::Result<Self> {
@@ -219,6 +221,7 @@ impl CatalogKind {
             "wallets" | "wallet" => Ok(Self::Wallet),
             "pools" | "pool" => Ok(Self::Pool),
             "miners" | "miner" => Ok(Self::Miner),
+            "oc-profiles" | "oc_profiles" | "oc_profile" => Ok(Self::OcProfile),
             _ => Err(crate::Error::NotFound),
         }
     }
@@ -228,6 +231,7 @@ impl CatalogKind {
             Self::Wallet => "wallets",
             Self::Pool => "pools",
             Self::Miner => "miners",
+            Self::OcProfile => "oc_profiles",
         }
     }
 }
@@ -301,6 +305,14 @@ pub enum Action {
     Power {
         operation: String,
     },
+    /// Applies overclocking on the rig and keeps it for re-application after reboot.
+    GpuOc {
+        #[serde(default)]
+        profile_name: Option<String>,
+        config: Box<GpuOcConfig>,
+    },
+    /// Restores driver defaults and forgets the saved overclock.
+    GpuOcReset,
     Adopt {
         name: String,
         pid: u32,
@@ -462,4 +474,164 @@ pub enum TerminalOutput {
 pub struct FlightPropagation {
     pub job: JobInput,
     pub snapshot: Value,
+}
+
+/// Overclocking in HiveOS's own terms (`nvidia-oc.conf` / `amd-oc.conf`). Every list holds one
+/// value per card of that vendor in PCI bus order; a shorter list repeats its last value, so a
+/// single value applies to all cards, and an empty list leaves the setting untouched.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct GpuOcConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nvidia: Option<NvidiaOc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amd: Option<AmdOc>,
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct NvidiaOc {
+    /// CLOCK: core offset in MHz; a value above 500 is a locked core clock.
+    #[serde(default)]
+    pub clock: Vec<i32>,
+    /// MEM: memory offset in MHz, Linux/HiveOS scale (twice the Windows Afterburner value).
+    #[serde(default)]
+    pub mem: Vec<i32>,
+    /// PLIMIT: power limit in W, 0 = driver default.
+    #[serde(default)]
+    pub plimit: Vec<i32>,
+    /// FAN: percent, 0 = automatic.
+    #[serde(default)]
+    pub fan: Vec<i32>,
+    /// RUNNING_DELAY: seconds to wait after boot before re-applying, like HiveOS.
+    #[serde(default)]
+    pub running_delay: u32,
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct AmdOc {
+    /// CORE_CLOCK, MHz.
+    #[serde(default)]
+    pub core_clock: Vec<i32>,
+    /// CORE_STATE: DPM state to set and pin, 0 = auto.
+    #[serde(default)]
+    pub core_state: Vec<i32>,
+    /// CORE_VDDC, mV.
+    #[serde(default)]
+    pub core_vddc: Vec<i32>,
+    /// MEM_CLOCK, MHz.
+    #[serde(default)]
+    pub mem_clock: Vec<i32>,
+    /// MEM_STATE, 0 = auto.
+    #[serde(default)]
+    pub mem_state: Vec<i32>,
+    /// MVDD, mV (PowerPlay table; accepted for HiveOS import, not written in this release).
+    #[serde(default)]
+    pub mvdd: Vec<i32>,
+    /// VDDCI, mV (PowerPlay table; not written in this release).
+    #[serde(default)]
+    pub vddci: Vec<i32>,
+    /// SOCCLK, MHz (PowerPlay table; not written in this release).
+    #[serde(default)]
+    pub soc_clk: Vec<i32>,
+    /// SOCVDDMAX, mV (PowerPlay table; not written in this release).
+    #[serde(default)]
+    pub soc_vdd_max: Vec<i32>,
+    /// REF: memory refresh via amdmemtweak when it is installed on the rig.
+    #[serde(default, rename = "ref")]
+    pub ref_: Vec<i32>,
+    /// FAN: percent, 0 = automatic.
+    #[serde(default)]
+    pub fan: Vec<i32>,
+    /// PL: power limit in W, 0 = driver default.
+    #[serde(default)]
+    pub pl: Vec<i32>,
+}
+
+pub const MAX_OC_CARDS: usize = 32;
+
+fn oc_field(label: &str, values: &[i32], low: i32, high: i32, zero: bool) -> crate::Result<()> {
+    if values.len() > MAX_OC_CARDS {
+        return Err(crate::Error::Validation(format!(
+            "{label} 最多 {MAX_OC_CARDS} 张卡"
+        )));
+    }
+    if let Some(v) = values
+        .iter()
+        .find(|&&v| !((low..=high).contains(&v) || zero && v == 0))
+    {
+        return Err(crate::Error::Validation(format!(
+            "{label} = {v} 超出允许范围 {low}–{high}{}",
+            if zero {
+                "（0 表示默认/不修改）"
+            } else {
+                ""
+            }
+        )));
+    }
+    Ok(())
+}
+
+impl GpuOcConfig {
+    /// Rejects typing mistakes. The bounds are input limits, not recommended settings.
+    pub fn validate(&self) -> crate::Result<()> {
+        if self.nvidia.is_none() && self.amd.is_none() {
+            return Err(crate::Error::Validation(
+                "至少填写 NVIDIA 或 AMD 一组超频参数".into(),
+            ));
+        }
+        if let Some(n) = &self.nvidia {
+            oc_field("NVIDIA 核心", &n.clock, -1000, 4000, false)?;
+            oc_field("NVIDIA 显存", &n.mem, -5000, 5000, false)?;
+            oc_field("NVIDIA 功耗墙", &n.plimit, 1, 1000, true)?;
+            oc_field("NVIDIA 风扇", &n.fan, 0, 100, false)?;
+            if n.running_delay > 300 {
+                return Err(crate::Error::Validation("延迟最多 300 秒".into()));
+            }
+        }
+        if let Some(a) = &self.amd {
+            oc_field("AMD 核心频率", &a.core_clock, 300, 4000, true)?;
+            oc_field("AMD 核心状态", &a.core_state, 0, 15, false)?;
+            oc_field("AMD 核心电压", &a.core_vddc, 500, 1300, true)?;
+            oc_field("AMD 显存频率", &a.mem_clock, 90, 3000, true)?;
+            oc_field("AMD 显存状态", &a.mem_state, 0, 15, false)?;
+            oc_field("AMD MVDD", &a.mvdd, 1000, 1500, true)?;
+            oc_field("AMD VDDCI", &a.vddci, 500, 1000, true)?;
+            oc_field("AMD SOC 频率", &a.soc_clk, 300, 2000, true)?;
+            oc_field("AMD SOC 电压", &a.soc_vdd_max, 500, 1300, true)?;
+            oc_field("AMD REF", &a.ref_, 0, 65535, false)?;
+            oc_field("AMD 风扇", &a.fan, 0, 100, false)?;
+            oc_field("AMD 功耗墙", &a.pl, 1, 1000, true)?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod oc_tests {
+    use super::*;
+
+    #[test]
+    fn hiveos_values_validate_and_mistakes_are_rejected() {
+        let config: GpuOcConfig = serde_json::from_value(serde_json::json!({
+            "nvidia": {"clock": [1500, -200], "mem": [2400], "plimit": [0, 220], "fan": [0]},
+            "amd": {"core_clock": [1150], "core_vddc": [850], "ref": [30]}
+        }))
+        .unwrap();
+        config.validate().unwrap();
+        assert_eq!(config.amd.as_ref().unwrap().ref_, vec![30]);
+        let action: Action = serde_json::from_value(
+            serde_json::json!({"kind":"gpu_oc","config":{"nvidia":{"fan":[101]}}}),
+        )
+        .unwrap();
+        let Action::GpuOc { config, .. } = action else {
+            panic!("wrong action")
+        };
+        assert!(config.validate().is_err());
+        assert!(GpuOcConfig::default().validate().is_err());
+        let many = GpuOcConfig {
+            nvidia: Some(NvidiaOc {
+                clock: vec![0; MAX_OC_CARDS + 1],
+                ..Default::default()
+            }),
+            amd: None,
+        };
+        assert!(many.validate().is_err());
+    }
 }

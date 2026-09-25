@@ -2704,6 +2704,15 @@ export interface components {
             kind: "power";
             operation: string;
         } | {
+            config: components["schemas"]["GpuOcConfig"];
+            /** @constant */
+            kind: "gpu_oc";
+            /** @default null */
+            profile_name: string | null;
+        } | {
+            /** @constant */
+            kind: "gpu_oc_reset";
+        } | {
             /** @constant */
             kind: "adopt";
             name: string;
@@ -2734,6 +2743,68 @@ export interface components {
             releases: components["schemas"]["MinerRelease"][];
             /** Format: uint32 */
             schema_version: number;
+        };
+        AmdOc: {
+            /**
+             * @description CORE_CLOCK, MHz.
+             * @default []
+             */
+            core_clock: number[];
+            /**
+             * @description CORE_STATE: DPM state to set and pin, 0 = auto.
+             * @default []
+             */
+            core_state: number[];
+            /**
+             * @description CORE_VDDC, mV.
+             * @default []
+             */
+            core_vddc: number[];
+            /**
+             * @description FAN: percent, 0 = automatic.
+             * @default []
+             */
+            fan: number[];
+            /**
+             * @description MEM_CLOCK, MHz.
+             * @default []
+             */
+            mem_clock: number[];
+            /**
+             * @description MEM_STATE, 0 = auto.
+             * @default []
+             */
+            mem_state: number[];
+            /**
+             * @description MVDD, mV (PowerPlay table; accepted for HiveOS import, not written in this release).
+             * @default []
+             */
+            mvdd: number[];
+            /**
+             * @description PL: power limit in W, 0 = driver default.
+             * @default []
+             */
+            pl: number[];
+            /**
+             * @description REF: memory refresh via amdmemtweak when it is installed on the rig.
+             * @default []
+             */
+            ref: number[];
+            /**
+             * @description SOCCLK, MHz (PowerPlay table; not written in this release).
+             * @default []
+             */
+            soc_clk: number[];
+            /**
+             * @description SOCVDDMAX, mV (PowerPlay table; not written in this release).
+             * @default []
+             */
+            soc_vdd_max: number[];
+            /**
+             * @description VDDCI, mV (PowerPlay table; not written in this release).
+             * @default []
+             */
+            vddci: number[];
         };
         /** AuditEvent */
         AuditEvent: {
@@ -2800,8 +2871,7 @@ export interface components {
             /** Format: int32 */
             revision: number;
         };
-        /** @enum {string} */
-        CatalogKind: "coin" | "wallet" | "pool" | "miner";
+        CatalogKind: ("coin" | "wallet" | "pool" | "miner") | "oc_profile";
         Credential: {
             /** @constant */
             kind: "password";
@@ -2852,6 +2922,15 @@ export interface components {
             miner: unknown;
             /** Format: uuid */
             wallet_id: string;
+        };
+        /**
+         * @description Overclocking in HiveOS's own terms (`nvidia-oc.conf` / `amd-oc.conf`). Every list holds one
+         *     value per card of that vendor in PCI bus order; a shorter list repeats its last value, so a
+         *     single value applies to all cards, and an empty list leaves the setting untouched.
+         */
+        GpuOcConfig: {
+            amd?: components["schemas"]["AmdOc"] | null;
+            nvidia?: components["schemas"]["NvidiaOc"] | null;
         };
         /** Job */
         Job: {
@@ -3014,6 +3093,34 @@ export interface components {
             sha256?: string | null;
             url: string;
             version: string;
+        };
+        NvidiaOc: {
+            /**
+             * @description CLOCK: core offset in MHz; a value above 500 is a locked core clock.
+             * @default []
+             */
+            clock: number[];
+            /**
+             * @description FAN: percent, 0 = automatic.
+             * @default []
+             */
+            fan: number[];
+            /**
+             * @description MEM: memory offset in MHz, Linux/HiveOS scale (twice the Windows Afterburner value).
+             * @default []
+             */
+            mem: number[];
+            /**
+             * @description PLIMIT: power limit in W, 0 = driver default.
+             * @default []
+             */
+            plimit: number[];
+            /**
+             * Format: uint32
+             * @description RUNNING_DELAY: seconds to wait after boot before re-applying, like HiveOS.
+             * @default 0
+             */
+            running_delay: number;
         };
         Object: {
             [key: string]: unknown;
