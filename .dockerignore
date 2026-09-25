@@ -1,0 +1,14 @@
+target
+frontend/node_modules
+frontend/dist
+frontend/playwright-report
+frontend/test-results
+data
+secrets
+.env
+.git
+screenshots
+**/__pycache__
+**/*.pem
+**/*.key
+**/*_ed25519*

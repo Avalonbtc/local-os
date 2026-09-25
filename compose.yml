@@ -1,0 +1,50 @@
+name: rigdeck
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rigdeck
+      POSTGRES_DB: rigdeck
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run python3 scripts/init.py}
+    volumes:
+      - postgres:/var/lib/postgresql
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U rigdeck -d rigdeck"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    shm_size: 256mb
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://rigdeck:${POSTGRES_PASSWORD}@postgres:5432/rigdeck
+      RIGDECK_ORIGIN: https://${RIGDECK_HOST:-rigdeck.local}
+      RIGDECK_MASTER_KEY_FILE: /run/secrets/master_key
+      RUST_LOG: info,sqlx=warn
+    depends_on:
+      postgres:
+        condition: service_healthy
+    secrets: [master_key]
+    volumes:
+      - packages:/data
+  https:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      RIGDECK_HOST: ${RIGDECK_HOST:-rigdeck.local}
+    ports: ["${RIGDECK_LISTEN:-0.0.0.0}:443:443", "${RIGDECK_LISTEN:-0.0.0.0}:80:80"]
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [app]
+secrets:
+  master_key:
+    file: ./secrets/master.key
+volumes:
+  postgres:
+  packages:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,27 @@
+[package]
+name = "rig-infrastructure"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rig-domain.workspace = true
+rig-application.workspace = true
+async-trait.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+sqlx.workspace = true
+reqwest.workspace = true
+russh.workspace = true
+sha2.workspace = true
+hex.workspace = true
+base64.workspace = true
+rand.workspace = true
+argon2.workspace = true
+aes-gcm.workspace = true
+futures-util.workspace = true
+

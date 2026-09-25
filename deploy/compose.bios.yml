@@ -1,0 +1,6 @@
+services:
+  app:
+    environment:
+      RIGDECK_SUM_PATH: /opt/supermicro/sum
+    volumes:
+      - ./tools/sum:/opt/supermicro:ro

@@ -1,0 +1,36 @@
+x-node: &node
+  build:
+    context: ../..
+    dockerfile: tests/lab/Dockerfile
+  image: rigdeck-test-node:local
+  mem_limit: 256m
+  cpus: 0.5
+  cap_add: [SYS_ADMIN]
+  security_opt: [apparmor=unconfined]
+  volumes:
+    - ${RIGDECK_LAB_PUBLIC_KEY:?set a disposable lab public key path}:/run/lab-key.pub:ro
+services:
+  node1:
+    <<: *node
+    ports: ["127.0.0.1:22221:22"]
+  node2:
+    <<: *node
+    ports: ["127.0.0.1:22222:22"]
+  node3:
+    <<: *node
+    ports: ["127.0.0.1:22223:22"]
+  node4:
+    <<: *node
+    ports: ["127.0.0.1:22224:22"]
+  node5:
+    <<: *node
+    ports: ["127.0.0.1:22225:22"]
+  node6:
+    <<: *node
+    ports: ["127.0.0.1:22226:22"]
+  node7:
+    <<: *node
+    ports: ["127.0.0.1:22227:22"]
+  node8:
+    <<: *node
+    ports: ["127.0.0.1:22228:22"]

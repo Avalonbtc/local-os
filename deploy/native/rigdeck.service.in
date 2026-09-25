@@ -1,0 +1,27 @@
+# Installed by scripts/native/install.sh. Runs the controller straight from the source tree:
+# every start rebuilds what changed (cargo / npm are incremental), then serves.
+[Unit]
+Description=RigDeck mining controller (from source)
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+# A broken build must not loop forever.
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=@USER@
+Group=@GROUP@
+WorkingDirectory=@REPO@
+EnvironmentFile=/etc/rigdeck/rigdeck.env
+ExecStartPre=/bin/bash @REPO@/scripts/native/build.sh
+ExecStart=@REPO@/target/release/rigdeck serve
+TimeoutStartSec=30min
+TimeoutStopSec=30s
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+{
+  "nodes": 8,
+  "ssh_connection_tests": 8,
+  "batch_command_job": "efc0dcb9-5427-45cb-a60e-6f33050c71ea",
+  "flight_sheet_job": "1df400e2-6058-4f95-99c1-522da6e00bd5",
+  "stop_job": "1e175e3c-3079-4787-95c3-147950b30cdf",
+  "stats_are_synthetic": true,
+  "real_mining_verified": false,
+  "completed_at": "2026-09-22T17:57:46Z"
+}

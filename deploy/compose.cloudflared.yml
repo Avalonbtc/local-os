@@ -1,0 +1,12 @@
+# Append after compose.yml; cloudflared runs on the controller host.
+# Set RIGDECK_HOST to the published hostname before applying.
+# Example: COMPOSE_FILE=compose.yml:deploy/compose.cloudflared.yml
+services:
+  app:
+    environment:
+      RIGDECK_ORIGIN: https://${RIGDECK_HOST:?set the public panel hostname}
+      # Origin is loopback-only; cloudflared supplies CF-Connecting-IP.
+      RIGDECK_TRUST_PROXY_HEADERS: "1"
+      RIGDECK_INSECURE_LOCALHOST: "0"
+    ports:
+      - "127.0.0.1:18082:8080"

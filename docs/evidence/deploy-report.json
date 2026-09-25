@@ -1,0 +1,8 @@
+{
+  "production_image": "rigdeck:local",
+  "https_certificate_verified": true,
+  "secure_cookie": true,
+  "wallet_write": true,
+  "postgres18_dump_restore": true,
+  "completed_at": "2026-09-22T18:04:00Z"
+}

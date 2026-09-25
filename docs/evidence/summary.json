@@ -1,0 +1,15 @@
+{
+  "recorded_at": "2026-09-22T18:04:53.051231+00:00",
+  "rust_unit_tests": 3,
+  "linux_runtime_tests": 12,
+  "postgres_integration": "passed",
+  "redfish_tls_contract": "passed",
+  "browser_e2e_tests": 3,
+  "production_browser_tests": 1,
+  "module_boundaries": "passed",
+  "openapi_generation_drift": false,
+  "production_image_id": "sha256:3bd0473b7d6525456a9b540a5bac8ee24580144aec040a24aa1e7a51c1b6f2e3",
+  "physical_servers_tested": 0,
+  "real_pool_mining_verified": false,
+  "physical_24h_soak_completed": false
+}
