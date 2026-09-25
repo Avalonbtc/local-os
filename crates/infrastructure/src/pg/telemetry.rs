@@ -134,6 +134,11 @@ fn job_label(row: &Value) -> String {
                     .join(", "))
                 .unwrap_or_default()
         ),
+        "gpu_oc" => match action["profile_name"].as_str() {
+            Some(name) => format!("应用超频：{name}"),
+            None => "应用超频".into(),
+        },
+        "gpu_oc_reset" => "恢复默认超频".into(),
         "bios_read" if action["discard_pending"] == true => "读取 BIOS 并清除待生效标记".into(),
         "bios_read" => "读取 BIOS".into(),
         "bios_write" => format!(

@@ -26,10 +26,13 @@ import time
 import urllib.request
 import uuid
 
-VERSION = "0.2.2"
+VERSION = "0.3.1"
 ROOT = Path(os.environ.get("RIG_RUNTIME_ROOT", "/var/lib/rigdeck"))
 # Controller reads this with a plain `cat` (no Python start-up, no sudo). /run is tmpfs.
 SNAPSHOT_DIR = Path(os.environ.get("RIG_SNAPSHOT_DIR", "/run/rigdeck"))
+# Samples rewritten every 10 s live on tmpfs: no disk (or USB/SD boot media) wear. They are only
+# meaningful within one boot anyway, and every reader already checks the boot id.
+VOLATILE = SNAPSHOT_DIR / "cache"
 EVENTS = ROOT / "events.jsonl"
 SELF = str(Path(__file__).resolve())
 MAX_OUTPUT = 1024 * 1024
@@ -58,6 +61,10 @@ def atomic(path, value):
         os.fsync(fd)
     finally:
         os.close(fd)
+
+
+def stats_file(name):
+    return VOLATILE / "instances" / name / "stats.json"
 
 
 def atomic_volatile(path, value, mode=0o600, owner=None):
@@ -482,7 +489,7 @@ def sample(name):
             cache["stats_observed_at"] = now
         except (subprocess.SubprocessError, ValueError, OSError) as error:
             cache["error"] = str(error)[:2000]
-    atomic_volatile(instance(name) / "stats.json", cache)
+    atomic_volatile(stats_file(name), cache)
     return cache
 
 
@@ -937,6 +944,10 @@ def operation_run(operation):
                 emit("info", "command", "远程命令执行完成", operation=operation, exit_code=result.get("exit_code"))
             elif kind == "adopt":
                 result = adopt(payload)
+            elif kind == "gpu_oc":
+                result = oc_apply_operation(payload)
+            elif kind == "gpu_oc_reset":
+                result = oc_reset_operation()
             else:
                 raise ValueError("Unknown operation kind")
             operation_update(operation, status="succeeded", result=result, finished_at=time.time())
@@ -1076,7 +1087,7 @@ def collect_hardware(base=Path("/"), dynamic_only=False):
             "cpu_temperatures": temperatures}
 
 
-_NVIDIA_CACHE = {"at": -1e9, "data": {}}  # per-tick nvidia-smi readings
+_NVIDIA_CACHE = {"at": -1e9, "data": {}}  # one NVIDIA reading per watchdog tick
 VIRTUAL_INTERFACES = re.compile(r"^(lo|veth|docker|br-|virbr|vnet|cni|flannel|cali|vxlan|tunl|kube|weave|lxc|tap|ifb)")
 
 
@@ -1090,10 +1101,77 @@ def _number(value, scale=1.0, low=None, high=None):
     return round(result, 1)
 
 
-def _nvidia_readings():
-    """One nvidia-smi call per watchdog tick (~100 ms), only on rigs that have NVIDIA cards."""
+_NVML_READER = {"nvml": None, "failed": False}
+
+
+def _nvml_readings(addresses):
+    """Reads NVIDIA cards in-process through NVML (kept open by the watchdog): no nvidia-smi
+    process every tick. Returns None when NVML is unavailable, so the caller falls back."""
+    if _NVML_READER["failed"]:
+        return None
+    nvml = _NVML_READER["nvml"]
+    if nvml is None:
+        try:
+            nvml = _NVML_READER["nvml"] = Nvml()
+        except NvmlError:
+            _NVML_READER["failed"] = True
+            return None
+    c = nvml.c
+
+    class Utilization(c.Structure):
+        _fields_ = [("gpu", c.c_uint), ("memory", c.c_uint)]
+
+    class Memory(c.Structure):
+        _fields_ = [("total", c.c_ulonglong), ("free", c.c_ulonglong), ("used", c.c_ulonglong)]
+
+    def value(name, *args, kind=None):
+        target = (kind or c.c_uint)()
+        try:
+            nvml.check(name, *args, c.byref(target))
+        except NvmlError:
+            return None
+        return target
+
+    readings = {}
+    for address in addresses:
+        try:
+            handle = nvml.handle(address)
+        except NvmlError:
+            continue
+        get = lambda name, *args: getattr(value(name, handle, *args), "value", None)  # noqa: E731
+        util = value("nvmlDeviceGetUtilizationRates", handle, kind=Utilization)
+        memory = value("nvmlDeviceGetMemoryInfo", handle, kind=Memory)
+        power = get("nvmlDeviceGetPowerUsage")
+        limit = get("nvmlDeviceGetPowerManagementLimit")
+        model = None
+        with contextlib.suppress(NvmlError):
+            model = nvml.name(handle)
+        readings[address.lower()] = {
+            "model": model,
+            "temperature_c": _number(get("nvmlDeviceGetTemperature", c.c_uint(0)), low=-50, high=150),
+            "fan_pct": _number(get("nvmlDeviceGetFanSpeed"), low=0, high=100),
+            "power_w": _number(power, 0.001, 0, 2000) if power is not None else None,
+            "util_pct": _number(util.gpu, low=0, high=100) if util else None,
+            "core_mhz": _number(get("nvmlDeviceGetClockInfo", c.c_uint(0)), low=0, high=10000),
+            "mem_mhz": _number(get("nvmlDeviceGetClockInfo", c.c_uint(2)), low=0, high=30000),
+            "vram_mb": _number(memory.total, 1 / 1048576, 0, 1e7) if memory else None,
+            "power_limit_w": _number(limit, 0.001, 0, 2000) if limit is not None else None}
+    return readings
+
+
+def _nvidia_readings(addresses=()):
+    """At most one reading per watchdog tick, only on rigs that have NVIDIA cards."""
     if time.monotonic() - _NVIDIA_CACHE["at"] < 9:
         return _NVIDIA_CACHE["data"]
+    readings = _nvml_readings(addresses)
+    if readings is None:
+        readings = _nvidia_smi_readings()
+    _NVIDIA_CACHE.update(at=time.monotonic(), data=readings)
+    return readings
+
+
+def _nvidia_smi_readings():
+    """Fallback for drivers without a usable libnvidia-ml."""
     readings = {}
     if shutil.which("nvidia-smi"):
         try:
@@ -1116,7 +1194,6 @@ def _nvidia_readings():
                     "power_limit_w": _number(limit, low=0, high=2000)}
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
-    _NVIDIA_CACHE.update(at=time.monotonic(), data=readings)
     return readings
 
 
@@ -1137,7 +1214,8 @@ def collect_gpus(base=Path("/")):
         except OSError:
             continue
         found.append((device, vendor, device_id))
-    nvidia = _nvidia_readings() if base == Path("/") and any(v == "0x10de" for _, v, _ in found) else {}
+    nvidia_cards = [device.name for device, vendor, _ in found if vendor == "0x10de"]
+    nvidia = _nvidia_readings(nvidia_cards) if base == Path("/") and nvidia_cards else {}
     gpus = []
     for device, vendor, device_id in found:
         def sysfs(relative, scale=1.0, low=None, high=None):
@@ -1199,7 +1277,7 @@ def collect_inventory():
 def collect_cpu_power(base=Path("/"), now=None):
     """Package energy deltas only: never sum overlapping core/DRAM subdomains."""
     now = time.monotonic() if now is None else now
-    cache = ROOT / "power-sample.json"
+    cache = VOLATILE / "power-sample.json"
     previous = read(cache)
     boot = (base / "proc/sys/kernel/random/boot_id").read_text().strip()
     samples, packages = {}, []
@@ -1239,12 +1317,12 @@ def collect_system():
     def meminfo():
         return {line.split(":")[0]: int(line.split()[1]) * 1024 for line in Path("/proc/meminfo").read_text().splitlines()}
     cpu = [int(v) for v in Path("/proc/stat").read_text().splitlines()[0].split()[1:]]
-    previous = read(ROOT / "cpu-sample.json")
+    previous = read(VOLATILE / "cpu-sample.json")
     total, idle = sum(cpu[:8]), cpu[3] + cpu[4]
     percent = None
     if previous and total > previous["total"]:
         percent = 100 * (1 - (idle - previous["idle"]) / (total - previous["total"]))
-    atomic_volatile(ROOT / "cpu-sample.json", {"total": total, "idle": idle})
+    atomic_volatile(VOLATILE / "cpu-sample.json", {"total": total, "idle": idle})
     memory = meminfo()
     # Disks and network interfaces are not uploaded: a mining rig's list only needs CPU, memory,
     # temperature, power and its primary address.
@@ -1255,7 +1333,7 @@ def collect_system():
             drivers[module[1]] = Path(f"/sys/module/{module[0]}/version").read_text().strip()
         except OSError:
             continue
-    return {**collect_hardware(dynamic_only=True), **collect_cpu_power(), "gpus": gpus, "gpu_drivers": drivers, "cpu_pct": percent, "logical_cpus": os.cpu_count(),
+    return {**collect_hardware(dynamic_only=True), **collect_cpu_power(), "gpus": gpus, "gpu_drivers": drivers, "gpu_oc": oc_summary() if gpus else None, "cpu_pct": percent, "logical_cpus": os.cpu_count(),
             "memory_total": memory["MemTotal"], "memory_used": memory["MemTotal"] - memory["MemAvailable"],
             "memory_pct": 100 * (1 - memory["MemAvailable"] / memory["MemTotal"]),
             "swap_total": memory["SwapTotal"], "swap_used": memory["SwapTotal"] - memory["SwapFree"],
@@ -1301,7 +1379,7 @@ def collect_mining():
     boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     items = []
     for p in (ROOT / "instances").glob("*"):
-        item = read(p / "stats.json")
+        item = read(stats_file(p.name))
         if item.get("boot_id") == boot and isinstance(item.get("sample_uptime"), (int, float)):
             at = now - max(0, uptime - item["sample_uptime"])
             item["observed_at"] = at
@@ -1353,7 +1431,7 @@ def publish_snapshot():
     now_uptime = uptime()
     instances = []
     for directory in sorted((ROOT / "instances").glob("*")):
-        item = read(directory / "stats.json")
+        item = read(stats_file(directory.name))
         if item and item.get("boot_id") not in (None, boot):
             item.update(process_alive=False, stats=None, stats_observed_at=None)
         if item:
@@ -1455,6 +1533,402 @@ def set_policy(payload):
     return {"digest": payload["digest"]}
 
 
+# ---------------------------------------------------------------------------------------------
+# GPU overclocking, HiveOS semantics (nvidia-oc.conf / amd-oc.conf):
+# every field is a per-card list in PCI bus order of that vendor's cards; a shorter list is
+# padded with its last value, so one value means "all cards"; an empty list leaves the setting
+# alone. NVIDIA: CLOCK > 500 is a locked core clock, otherwise a core offset; MEM is the
+# Linux/HiveOS memory offset (twice the Windows Afterburner value); PLIMIT 0 = default power
+# limit; FAN 0 = automatic. AMD: *_CLOCK in MHz, *_VDDC/MVDD/VDDCI in mV, *_STATE 0 = auto,
+# PL in W (0 = default), FAN 0 = automatic, REF needs amdmemtweak on the rig.
+# NVIDIA goes through NVML (libnvidia-ml, no X server); AMD through the amdgpu OverDrive sysfs
+# (kernel parameter amdgpu.ppfeaturemask=0xffffffff). Settings are lost on reboot and driver
+# reload; the rig re-applies the saved profile at boot.
+# ---------------------------------------------------------------------------------------------
+OC_FILE = "oc.json"
+NVIDIA_OC_FIELDS = ("clock", "mem", "plimit", "fan")
+AMD_OC_FIELDS = ("core_clock", "core_state", "core_vddc", "mem_clock", "mem_state", "mvdd", "vddci",
+                 "soc_clk", "soc_vdd_max", "ref", "fan", "pl")
+NVIDIA_LOCK_THRESHOLD = 500
+
+
+def oc_expand(values, count):
+    """HiveOS padding: missing trailing cards reuse the last value; no values -> untouched."""
+    if not values:
+        return [None] * count
+    values = [int(v) for v in values]
+    return [values[i] if i < len(values) else values[-1] for i in range(count)]
+
+
+def oc_cards(vendor, base=Path("/")):
+    """PCI addresses of one vendor's display devices, in bus order (HiveOS card order)."""
+    ids = {"nvidia": "0x10de", "amd": "0x1002"}[vendor]
+    cards = []
+    for device in sorted((base / "sys/bus/pci/devices").glob("*")):
+        try:
+            if (device / "vendor").read_text().strip().lower() == ids and \
+                    (device / "class").read_text().strip().lower().startswith("0x03"):
+                cards.append(device)
+        except OSError:
+            continue
+    return cards
+
+
+class NvmlError(RuntimeError):
+    pass
+
+
+class Nvml:
+    """Minimal ctypes binding for the NVML calls HiveOS's nvtool makes (driver R520+)."""
+
+    def __init__(self):
+        import ctypes
+        self.c = ctypes
+        try:
+            self.lib = ctypes.CDLL("libnvidia-ml.so.1")
+        except OSError as error:
+            raise NvmlError(f"未找到 NVIDIA 驱动库 libnvidia-ml.so.1：{error}") from error
+        self.check("nvmlInit_v2")
+
+    def close(self):
+        with contextlib.suppress(Exception):
+            self.lib.nvmlShutdown()
+
+    def check(self, name, *args):
+        try:
+            function = getattr(self.lib, name)
+        except AttributeError:
+            raise NvmlError(f"驱动不支持 {name}（需要 R520 或更新的驱动）") from None
+        code = function(*args)
+        if code:
+            self.lib.nvmlErrorString.restype = self.c.c_char_p
+            raise NvmlError(f"{name}: {self.lib.nvmlErrorString(code).decode(errors='replace')} ({code})")
+
+    def handle(self, address):
+        handle = self.c.c_void_p()
+        self.check("nvmlDeviceGetHandleByPciBusId_v2", address.encode(), self.c.byref(handle))
+        return handle
+
+    def uint(self, name, handle):
+        value = self.c.c_uint()
+        self.check(name, handle, self.c.byref(value))
+        return value.value
+
+    def int(self, name, handle):
+        value = self.c.c_int()
+        self.check(name, handle, self.c.byref(value))
+        return value.value
+
+    def name(self, handle):
+        buffer = self.c.create_string_buffer(96)
+        self.check("nvmlDeviceGetName", handle, buffer, self.c.c_uint(96))
+        return buffer.value.decode(errors="replace")
+
+    def power_constraints(self, handle):
+        low, high = self.c.c_uint(), self.c.c_uint()
+        self.check("nvmlDeviceGetPowerManagementLimitConstraints", handle, self.c.byref(low), self.c.byref(high))
+        return low.value, high.value
+
+
+def nvidia_card_oc(nvml, handle, clock, mem, plimit, fan, reset=False):
+    """Applies one card; every step is attempted and reported separately."""
+    c = nvml.c
+    done, errors = [], []
+
+    def step(label, function):
+        try:
+            function()
+            done.append(label)
+        except NvmlError as error:
+            errors.append(f"{label}: {error}")
+
+    with contextlib.suppress(NvmlError):  # keeps settings while no process holds the GPU
+        nvml.check("nvmlDeviceSetPersistenceMode", handle, c.c_uint(1))
+    if reset:
+        clock, mem, plimit, fan = 0, 0, 0, 0
+    if plimit is not None:
+        def power():
+            low, high = nvml.power_constraints(handle)
+            target = nvml.uint("nvmlDeviceGetPowerManagementDefaultLimit", handle) if plimit == 0 else plimit * 1000
+            if not low <= target <= high:
+                raise NvmlError(f"{plimit} W 超出本卡范围 {low // 1000}–{high // 1000} W")
+            nvml.check("nvmlDeviceSetPowerManagementLimit", handle, c.c_uint(target))
+        step("默认功耗墙" if plimit == 0 else f"功耗墙 {plimit} W", power)
+    if clock is not None:
+        if clock > NVIDIA_LOCK_THRESHOLD:
+            def lock():
+                nvml.check("nvmlDeviceSetGpcClkVfOffset", handle, c.c_int(0))
+                nvml.check("nvmlDeviceSetGpuLockedClocks", handle, c.c_uint(clock), c.c_uint(clock))
+            step(f"锁定核心 {clock} MHz", lock)
+        else:
+            def offset():
+                with contextlib.suppress(NvmlError):
+                    nvml.check("nvmlDeviceResetGpuLockedClocks", handle)
+                nvml.check("nvmlDeviceSetGpcClkVfOffset", handle, c.c_int(clock))
+            step(f"核心偏移 {clock:+d}", offset)
+    if mem is not None:
+        step(f"显存偏移 {mem:+d}", lambda: nvml.check("nvmlDeviceSetMemClkVfOffset", handle, c.c_int(mem)))
+    if fan is not None:
+        def fans():
+            count = nvml.uint("nvmlDeviceGetNumFans", handle)
+            for index in range(count):
+                if fan == 0:
+                    nvml.check("nvmlDeviceSetDefaultFanSpeed_v2", handle, c.c_uint(index))
+                else:
+                    nvml.check("nvmlDeviceSetFanSpeed_v2", handle, c.c_uint(index), c.c_uint(fan))
+        step("风扇自动" if fan == 0 else f"风扇 {fan}%", fans)
+    readback = {}
+    for key, name, reader in (("core_offset", "nvmlDeviceGetGpcClkVfOffset", nvml.int),
+                              ("mem_offset", "nvmlDeviceGetMemClkVfOffset", nvml.int),
+                              ("power_limit_mw", "nvmlDeviceGetPowerManagementLimit", nvml.uint)):
+        with contextlib.suppress(NvmlError):
+            readback[key] = reader(name, handle)
+    return done, errors, readback
+
+
+def apply_nvidia_oc(settings, reset=False, base=Path("/")):
+    cards = oc_cards("nvidia", base)
+    if not cards:
+        return []
+    nvml = Nvml()
+    try:
+        values = {field: oc_expand((settings or {}).get(field), len(cards)) for field in NVIDIA_OC_FIELDS}
+        results = []
+        for index, device in enumerate(cards):
+            entry = {"vendor": "NVIDIA", "index": index, "bus_id": device.name}
+            try:
+                handle = nvml.handle(device.name)
+                entry["model"] = nvml.name(handle)
+                done, errors, readback = nvidia_card_oc(
+                    nvml, handle, *(values[field][index] for field in NVIDIA_OC_FIELDS), reset=reset)
+                entry.update(applied=done, errors=errors, readback=readback)
+            except NvmlError as error:
+                entry.update(applied=[], errors=[str(error)])
+            results.append(entry)
+        return results
+    finally:
+        nvml.close()
+
+
+def _write(path, value):
+    Path(path).write_text(f"{value}\n")
+
+
+def amd_od_kind(table):
+    """Which OverDrive dialect pp_od_clk_voltage speaks on this card."""
+    if "OD_VDDC_CURVE" in table:
+        return "curve"      # Vega 20 / Navi 10: "s 1 clk", "m 1 clk", "vc 2 clk mV"
+    if "OD_VDDGFX_OFFSET" in table:
+        return "offset"     # RDNA2 / RDNA3: "s 1 clk", "m 1 clk", voltage only as offset
+    if re.search(r"^\s*\d+:\s*\d+\s*MHz\s+\d+\s*mV", table, re.I | re.M):
+        return "states"     # Polaris / Vega 10: "s <state> clk mV", "m <state> clk mV"
+    return "unknown"
+
+
+def amd_states(table, section):
+    """{state: (MHz, mV)} from an "OD_SCLK:"/"OD_MCLK:" block of a legacy table."""
+    states, active = {}, False
+    for line in table.splitlines():
+        if line.strip().endswith(":") and not re.match(r"\s*\d+:", line):
+            active = line.strip() == f"{section}:"
+            continue
+        match = re.match(r"\s*(\d+):\s*(\d+)\s*MHz\s+(\d+)\s*mV", line, re.I)
+        if active and match:
+            states[int(match[1])] = (int(match[2]), int(match[3]))
+    return states
+
+
+def amd_card_oc(device, index, v, reset=False):
+    done, errors, skipped = [], [], []
+    od = device / "pp_od_clk_voltage"
+    level = device / "power_dpm_force_performance_level"
+    hwmon = next(iter(sorted(device.glob("hwmon/hwmon*"))), None)
+
+    def step(label, function):
+        try:
+            function()
+            done.append(label)
+        except (OSError, ValueError) as error:
+            errors.append(f"{label}: {error}")
+
+    if reset:
+        if od.exists():
+            def restore():
+                _write(od, "r")
+                _write(od, "c")
+            step("恢复默认频率电压", restore)
+        if level.exists():
+            step("DPM 自动", lambda: _write(level, "auto"))
+        if hwmon and (hwmon / "pwm1_enable").exists():
+            step("风扇自动", lambda: _write(hwmon / "pwm1_enable", 2))
+        if hwmon and (hwmon / "power1_cap_default").exists():
+            step("默认功耗墙", lambda: _write(hwmon / "power1_cap", (hwmon / "power1_cap_default").read_text().strip()))
+        return done, errors, skipped
+
+    wants_od = any(v[k] for k in ("core_clock", "core_vddc", "mem_clock"))
+    if wants_od:
+        try:
+            table = od.read_text()
+        except OSError:
+            table = None
+            errors.append("未启用 OverDrive（pp_od_clk_voltage 不存在）：需要内核参数 amdgpu.ppfeaturemask=0xffffffff 后重启")
+        if table is not None:
+            kind = amd_od_kind(table)
+            commands = []
+            if kind == "states":
+                for section, prefix, clock, state, volt in (("OD_SCLK", "s", v["core_clock"], v["core_state"], v["core_vddc"]),
+                                                            ("OD_MCLK", "m", v["mem_clock"], v["mem_state"], None)):
+                    states = amd_states(table, section)
+                    if not states or not (clock or volt):
+                        continue
+                    target = state if state else max(states)
+                    if target not in states:
+                        errors.append(f"{section} 没有状态 {target}（可用 0–{max(states)}）")
+                        continue
+                    old_clock, old_volt = states[target]
+                    commands.append(f"{prefix} {target} {clock or old_clock} {volt or old_volt}")
+            elif kind in ("curve", "offset"):
+                if v["core_clock"]:
+                    commands.append(f"s 1 {v['core_clock']}")
+                    if kind == "curve" and v["core_vddc"]:
+                        commands.append(f"vc 2 {v['core_clock']} {v['core_vddc']}")
+                if v["mem_clock"]:
+                    commands.append(f"m 1 {v['mem_clock']}")
+                if v["core_vddc"] and (kind == "offset" or not v["core_clock"]):
+                    skipped.append("核心电压：此显卡只能随核心频率设置或仅支持电压偏移，未写入")
+            else:
+                errors.append("无法识别 pp_od_clk_voltage 格式，未写入频率")
+            if commands:
+                def overdrive():
+                    if level.exists():
+                        _write(level, "manual")
+                    for command in commands:
+                        _write(od, command)
+                    _write(od, "c")
+                step("频率/电压 " + "; ".join(commands), overdrive)
+    for name, state in (("pp_dpm_sclk", v["core_state"]), ("pp_dpm_mclk", v["mem_state"])):
+        if state and (device / name).exists():
+            def pin(name=name, state=state):
+                _write(level, "manual")
+                _write(device / name, state)
+            step(f"{name} 状态 {state}", pin)
+    if hwmon is None and (v["pl"] is not None or v["fan"] is not None):
+        errors.append("找不到 hwmon，无法设置功耗墙和风扇")
+    if hwmon is not None and v["pl"] is not None:
+        def power():
+            if v["pl"] == 0:
+                default = hwmon / "power1_cap_default"
+                if default.exists():
+                    _write(hwmon / "power1_cap", default.read_text().strip())
+                return
+            maximum = int((hwmon / "power1_cap_max").read_text()) if (hwmon / "power1_cap_max").exists() else None
+            if maximum is not None and v["pl"] * 1000000 > maximum:
+                raise ValueError(f"超过本卡上限 {maximum // 1000000} W")
+            _write(hwmon / "power1_cap", v["pl"] * 1000000)
+        step("默认功耗墙" if v["pl"] == 0 else f"功耗墙 {v['pl']} W", power)
+    if hwmon is not None and v["fan"] is not None:
+        def fan():
+            if v["fan"] == 0:
+                _write(hwmon / "pwm1_enable", 2)
+                return
+            low = int((hwmon / "pwm1_min").read_text()) if (hwmon / "pwm1_min").exists() else 0
+            high = int((hwmon / "pwm1_max").read_text()) if (hwmon / "pwm1_max").exists() else 255
+            _write(hwmon / "pwm1_enable", 1)
+            _write(hwmon / "pwm1", v["fan"] * (high - low) // 100 + low)
+        step("风扇自动" if v["fan"] == 0 else f"风扇 {v['fan']}%", fan)
+    if v["ref"]:
+        tool = shutil.which("amdmemtweak")
+        if not tool:
+            skipped.append("REF：矿机未安装 amdmemtweak，未写入")
+        else:
+            def ref():
+                subprocess.run([tool, "--i", str(index), "--REF", str(v["ref"])], check=True,
+                               capture_output=True, timeout=30)
+            step(f"REF {v['ref']}", ref)
+    for key, label in (("mvdd", "MVDD"), ("vddci", "VDDCI"), ("soc_clk", "SOC 频率"), ("soc_vdd_max", "SOC 电压")):
+        if v[key]:
+            skipped.append(f"{label}：需要修改 PowerPlay 表，本版本不写入")
+    return done, errors, skipped
+
+
+def apply_amd_oc(settings, reset=False, base=Path("/")):
+    cards = oc_cards("amd", base)
+    values = {field: oc_expand((settings or {}).get(field), len(cards)) for field in AMD_OC_FIELDS}
+    results = []
+    for index, device in enumerate(cards):
+        v = {field: values[field][index] for field in AMD_OC_FIELDS}
+        done, errors, skipped = amd_card_oc(device, index, v, reset=reset)
+        results.append({"vendor": "AMD", "index": index, "bus_id": device.name,
+                        "applied": done, "errors": errors, "skipped": skipped})
+    return results
+
+
+def gpu_oc(config, reset=False, base=Path("/")):
+    """Applies (or resets) both vendors; failures on one card never stop the others."""
+    results = []
+    for vendor, function in (("nvidia", apply_nvidia_oc), ("amd", apply_amd_oc)):
+        settings = (config or {}).get(vendor)
+        if not reset and not settings:
+            continue
+        try:
+            results.extend(function(settings, reset=reset, base=base))
+        except (NvmlError, OSError) as error:
+            results.append({"vendor": "NVIDIA" if vendor == "nvidia" else "AMD", "errors": [str(error)], "applied": []})
+    for entry in results:
+        print(f"[{entry['vendor']} {entry.get('index', '-')} {entry.get('bus_id', '')}] "
+              f"{'; '.join(entry.get('applied', [])) or '无修改'}"
+              + (f" | 错误：{'; '.join(entry['errors'])}" if entry.get("errors") else "")
+              + (f" | 跳过：{'; '.join(entry['skipped'])}" if entry.get("skipped") else ""), flush=True)
+    return results
+
+
+def oc_apply_operation(payload):
+    config = payload.get("config") or {}
+    if not isinstance(config, dict):
+        raise ValueError("Invalid overclock payload")
+    results = gpu_oc(config)
+    if not results:
+        raise RuntimeError("未检测到可超频的 NVIDIA/AMD 显卡")
+    failed = sum(1 for entry in results if entry.get("errors"))
+    atomic(ROOT / OC_FILE, {"config": config, "profile_name": payload.get("profile_name"),
+                            "applied_at": time.time(), "results": results})
+    emit("warning" if failed else "info", "gpu_oc",
+         f"已应用超频 {payload.get('profile_name') or ''}".strip() + (f"，{failed} 张卡有错误" if failed else ""))
+    if failed == len(results):
+        raise RuntimeError("所有显卡的超频都失败，见输出")
+    return {"cards": results}
+
+
+def oc_reset_operation():
+    results = gpu_oc({}, reset=True)
+    (ROOT / OC_FILE).unlink(missing_ok=True)
+    emit("info", "gpu_oc_reset", "显卡超频已恢复默认")
+    return {"cards": results}
+
+
+def oc_reapply(delay=0):
+    """Boot path: settings do not survive a reboot or driver reload."""
+    saved = read(ROOT / OC_FILE)
+    if not saved.get("config"):
+        return
+    delay = max(0, min(int((saved["config"].get("nvidia") or {}).get("running_delay") or delay), 300))
+    if delay:
+        time.sleep(delay)
+    results = gpu_oc(saved["config"])
+    saved.update(results=results, applied_at=time.time())
+    atomic(ROOT / OC_FILE, saved)
+    failed = sum(1 for entry in results if entry.get("errors"))
+    emit("warning" if failed else "info", "gpu_oc", "开机后已重新应用超频" + (f"，{failed} 张卡有错误" if failed else ""))
+
+
+def oc_summary():
+    saved = read(ROOT / OC_FILE)
+    if not saved:
+        return None
+    return {"profile_name": saved.get("profile_name"), "applied_at": saved.get("applied_at"),
+            "config": saved.get("config"), "results": saved.get("results")}
+
+
 def main():
     ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
     parser = argparse.ArgumentParser()
@@ -1518,10 +1992,18 @@ def main():
     elif cmd == "recover":
         emit("info", "boot", "系统启动，恢复期望的矿工状态")
         recover_interrupted_deployments()
+        if read(ROOT / OC_FILE).get("config"):
+            # Detached so a HiveOS-style RUNNING_DELAY never holds up miner recovery.
+            subprocess.Popen([sys.executable, SELF, "oc-reapply"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
         for path in (ROOT / "instances").glob("*"):
             s = state(path.name)
             if s.get("desired") == "running" and not s.get("maintenance") and s.get("phase") != "faulted":
                 start(path.name, preserve=True)
+    elif cmd == "oc-reapply":
+        oc_reapply()
+    elif cmd == "oc-status":
+        print(json.dumps(oc_summary()))
     elif cmd == "operation-start":
         print(json.dumps(operation_start(params[0], json.loads(base64.b64decode(params[1])))))
     elif cmd == "operation-run":

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { lazy, Suspense, useEffect, useRef } from "react";
 import ReactDOM from "react-dom/client";
 import {
   App as AntApp,
@@ -34,13 +34,18 @@ import {
 import { client, setCsrf, unwrap, useMachines } from "./shared/api";
 import { Login } from "./features/identity";
 import { FleetPage, FleetSummary, FleetDataCache, MachineDetail } from "./features/fleet";
-import { WalletsPage } from "./features/wallets";
-import { FlightsPage } from "./features/flight_sheets";
-import { BmcPage } from "./features/bmc";
-import { BiosPage } from "./features/bios";
-import { SettingsPage } from "./features/settings";
-import { TerminalsPage } from "./features/terminal";
 import "./styles.css";
+
+// The machine list is the landing page; every other farm tab is fetched when first opened.
+const page = <K extends string>(load: () => Promise<Record<K, React.ComponentType>>, name: K) =>
+  lazy(() => load().then((module) => ({ default: module[name] })));
+const WalletsPage = page(() => import("./features/wallets"), "WalletsPage");
+const FlightsPage = page(() => import("./features/flight_sheets"), "FlightsPage");
+const BmcPage = page(() => import("./features/bmc"), "BmcPage");
+const BiosPage = page(() => import("./features/bios"), "BiosPage");
+const OverclockPage = page(() => import("./features/overclock"), "OverclockPage");
+const SettingsPage = page(() => import("./features/settings"), "SettingsPage");
+const TerminalsPage = page(() => import("./features/terminal"), "TerminalsPage");
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -52,6 +57,7 @@ const farmTabs = [
   ["/machines", "矿机"],
   ["/wallets", "钱包"],
   ["/flight-sheets", "飞行表"],
+  ["/overclocking", "超频"],
   ["/bmc", "BMC 设备"],
   ["/bios", "BIOS"],
   ["/terminals", "多机终端"],
@@ -219,6 +225,7 @@ function Root() {
         </>
       )}
       <main className={`rd-main ${location.pathname === "/machines" ? "rd-main-fleet" : ""}`}>
+        <Suspense fallback={<Spin style={{ display: "block", margin: 60 }} />}>
         <Routes>
           <Route path="/" element={<Navigate replace to="/machines" />} />
           <Route path="/machines" element={<FleetPage />} />
@@ -226,6 +233,7 @@ function Root() {
           <Route path="/wallets" element={<WalletsPage />} />
           <Route path="/flight-sheets" element={<FlightsPage />} />
           <Route path="/bmc" element={<BmcPage />} />
+          <Route path="/overclocking" element={<OverclockPage />} />
           <Route path="/bios" element={<BiosPage />} />
           <Route path="/bios/:id" element={<BiosPage />} />
           <Route path="/settings" element={<SettingsPage />} />
@@ -244,6 +252,7 @@ function Root() {
             }
           />
         </Routes>
+        </Suspense>
       </main>
     </div>
   );

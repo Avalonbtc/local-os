@@ -66,6 +66,15 @@ impl App {
             {
                 return Err(Error::Validation("电源动作无效".into()));
             }
+            Action::GpuOc {
+                profile_name,
+                config,
+            } => {
+                if let Some(name) = profile_name {
+                    valid_name(name)?;
+                }
+                config.validate()?;
+            }
             Action::Adopt {
                 name,
                 pid,
