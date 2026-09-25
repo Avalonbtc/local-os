@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import {
   Alert,
   App,
@@ -9,6 +9,7 @@ import {
   Modal,
   Select,
   Space,
+  Spin,
   Table,
   Tabs,
   Tag,
@@ -39,7 +40,6 @@ import {
   PowerState,
   JsonView,
 } from "../../shared/ui";
-import { TerminalPane } from "../terminal";
 import { WorkerOverclock } from "../overclock";
 import {
   MessagesFeed,
@@ -50,6 +50,10 @@ import {
 } from "./worker";
 import { MachineEditor, BatchModal } from "./controls";
 import { DeviceTable, MinerPanel, RecentChips, StatusLine, SystemTiles, WorkerBand } from "./worker-view";
+
+// xterm is only downloaded when a terminal tab is opened.
+const TerminalPane = lazy(() => import("../terminal").then((m) => ({ default: m.TerminalPane })));
+const terminalFallback = <Spin style={{ display: "block", margin: 40 }} />;
 
 export function MachineDetail() {
   const { id } = useParams();
@@ -369,10 +373,12 @@ export function MachineDetail() {
                   style={{ minWidth: 220, marginBottom: 16 }}
                 />
                 {(instance ?? instances[0]?.instance) ? (
-                  <TerminalPane
-                    id={id!}
-                    instance={instance ?? instances[0].instance}
-                  />
+                  <Suspense fallback={terminalFallback}>
+                    <TerminalPane
+                      id={id!}
+                      instance={instance ?? instances[0].instance}
+                    />
+                  </Suspense>
                 ) : (
                   <Alert type="info" message="没有可连接的托管矿工实例" />
                 )}
@@ -382,7 +388,11 @@ export function MachineDetail() {
           {
             key: "ssh",
             label: "SSH 终端",
-            children: <TerminalPane id={id!} />,
+            children: (
+              <Suspense fallback={terminalFallback}>
+                <TerminalPane id={id!} />
+              </Suspense>
+            ),
           },
           {
             key: "logs",

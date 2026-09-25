@@ -26,10 +26,13 @@ import time
 import urllib.request
 import uuid
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 ROOT = Path(os.environ.get("RIG_RUNTIME_ROOT", "/var/lib/rigdeck"))
 # Controller reads this with a plain `cat` (no Python start-up, no sudo). /run is tmpfs.
 SNAPSHOT_DIR = Path(os.environ.get("RIG_SNAPSHOT_DIR", "/run/rigdeck"))
+# Samples rewritten every 10 s live on tmpfs: no disk (or USB/SD boot media) wear. They are only
+# meaningful within one boot anyway, and every reader already checks the boot id.
+VOLATILE = SNAPSHOT_DIR / "cache"
 EVENTS = ROOT / "events.jsonl"
 SELF = str(Path(__file__).resolve())
 MAX_OUTPUT = 1024 * 1024
@@ -58,6 +61,10 @@ def atomic(path, value):
         os.fsync(fd)
     finally:
         os.close(fd)
+
+
+def stats_file(name):
+    return VOLATILE / "instances" / name / "stats.json"
 
 
 def atomic_volatile(path, value, mode=0o600, owner=None):
@@ -482,7 +489,7 @@ def sample(name):
             cache["stats_observed_at"] = now
         except (subprocess.SubprocessError, ValueError, OSError) as error:
             cache["error"] = str(error)[:2000]
-    atomic_volatile(instance(name) / "stats.json", cache)
+    atomic_volatile(stats_file(name), cache)
     return cache
 
 
@@ -1080,7 +1087,7 @@ def collect_hardware(base=Path("/"), dynamic_only=False):
             "cpu_temperatures": temperatures}
 
 
-_NVIDIA_CACHE = {"at": -1e9, "data": {}}  # per-tick nvidia-smi readings
+_NVIDIA_CACHE = {"at": -1e9, "data": {}}  # one NVIDIA reading per watchdog tick
 VIRTUAL_INTERFACES = re.compile(r"^(lo|veth|docker|br-|virbr|vnet|cni|flannel|cali|vxlan|tunl|kube|weave|lxc|tap|ifb)")
 
 
@@ -1094,10 +1101,77 @@ def _number(value, scale=1.0, low=None, high=None):
     return round(result, 1)
 
 
-def _nvidia_readings():
-    """One nvidia-smi call per watchdog tick (~100 ms), only on rigs that have NVIDIA cards."""
+_NVML_READER = {"nvml": None, "failed": False}
+
+
+def _nvml_readings(addresses):
+    """Reads NVIDIA cards in-process through NVML (kept open by the watchdog): no nvidia-smi
+    process every tick. Returns None when NVML is unavailable, so the caller falls back."""
+    if _NVML_READER["failed"]:
+        return None
+    nvml = _NVML_READER["nvml"]
+    if nvml is None:
+        try:
+            nvml = _NVML_READER["nvml"] = Nvml()
+        except NvmlError:
+            _NVML_READER["failed"] = True
+            return None
+    c = nvml.c
+
+    class Utilization(c.Structure):
+        _fields_ = [("gpu", c.c_uint), ("memory", c.c_uint)]
+
+    class Memory(c.Structure):
+        _fields_ = [("total", c.c_ulonglong), ("free", c.c_ulonglong), ("used", c.c_ulonglong)]
+
+    def value(name, *args, kind=None):
+        target = (kind or c.c_uint)()
+        try:
+            nvml.check(name, *args, c.byref(target))
+        except NvmlError:
+            return None
+        return target
+
+    readings = {}
+    for address in addresses:
+        try:
+            handle = nvml.handle(address)
+        except NvmlError:
+            continue
+        get = lambda name, *args: getattr(value(name, handle, *args), "value", None)  # noqa: E731
+        util = value("nvmlDeviceGetUtilizationRates", handle, kind=Utilization)
+        memory = value("nvmlDeviceGetMemoryInfo", handle, kind=Memory)
+        power = get("nvmlDeviceGetPowerUsage")
+        limit = get("nvmlDeviceGetPowerManagementLimit")
+        model = None
+        with contextlib.suppress(NvmlError):
+            model = nvml.name(handle)
+        readings[address.lower()] = {
+            "model": model,
+            "temperature_c": _number(get("nvmlDeviceGetTemperature", c.c_uint(0)), low=-50, high=150),
+            "fan_pct": _number(get("nvmlDeviceGetFanSpeed"), low=0, high=100),
+            "power_w": _number(power, 0.001, 0, 2000) if power is not None else None,
+            "util_pct": _number(util.gpu, low=0, high=100) if util else None,
+            "core_mhz": _number(get("nvmlDeviceGetClockInfo", c.c_uint(0)), low=0, high=10000),
+            "mem_mhz": _number(get("nvmlDeviceGetClockInfo", c.c_uint(2)), low=0, high=30000),
+            "vram_mb": _number(memory.total, 1 / 1048576, 0, 1e7) if memory else None,
+            "power_limit_w": _number(limit, 0.001, 0, 2000) if limit is not None else None}
+    return readings
+
+
+def _nvidia_readings(addresses=()):
+    """At most one reading per watchdog tick, only on rigs that have NVIDIA cards."""
     if time.monotonic() - _NVIDIA_CACHE["at"] < 9:
         return _NVIDIA_CACHE["data"]
+    readings = _nvml_readings(addresses)
+    if readings is None:
+        readings = _nvidia_smi_readings()
+    _NVIDIA_CACHE.update(at=time.monotonic(), data=readings)
+    return readings
+
+
+def _nvidia_smi_readings():
+    """Fallback for drivers without a usable libnvidia-ml."""
     readings = {}
     if shutil.which("nvidia-smi"):
         try:
@@ -1120,7 +1194,6 @@ def _nvidia_readings():
                     "power_limit_w": _number(limit, low=0, high=2000)}
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
-    _NVIDIA_CACHE.update(at=time.monotonic(), data=readings)
     return readings
 
 
@@ -1141,7 +1214,8 @@ def collect_gpus(base=Path("/")):
         except OSError:
             continue
         found.append((device, vendor, device_id))
-    nvidia = _nvidia_readings() if base == Path("/") and any(v == "0x10de" for _, v, _ in found) else {}
+    nvidia_cards = [device.name for device, vendor, _ in found if vendor == "0x10de"]
+    nvidia = _nvidia_readings(nvidia_cards) if base == Path("/") and nvidia_cards else {}
     gpus = []
     for device, vendor, device_id in found:
         def sysfs(relative, scale=1.0, low=None, high=None):
@@ -1203,7 +1277,7 @@ def collect_inventory():
 def collect_cpu_power(base=Path("/"), now=None):
     """Package energy deltas only: never sum overlapping core/DRAM subdomains."""
     now = time.monotonic() if now is None else now
-    cache = ROOT / "power-sample.json"
+    cache = VOLATILE / "power-sample.json"
     previous = read(cache)
     boot = (base / "proc/sys/kernel/random/boot_id").read_text().strip()
     samples, packages = {}, []
@@ -1243,12 +1317,12 @@ def collect_system():
     def meminfo():
         return {line.split(":")[0]: int(line.split()[1]) * 1024 for line in Path("/proc/meminfo").read_text().splitlines()}
     cpu = [int(v) for v in Path("/proc/stat").read_text().splitlines()[0].split()[1:]]
-    previous = read(ROOT / "cpu-sample.json")
+    previous = read(VOLATILE / "cpu-sample.json")
     total, idle = sum(cpu[:8]), cpu[3] + cpu[4]
     percent = None
     if previous and total > previous["total"]:
         percent = 100 * (1 - (idle - previous["idle"]) / (total - previous["total"]))
-    atomic_volatile(ROOT / "cpu-sample.json", {"total": total, "idle": idle})
+    atomic_volatile(VOLATILE / "cpu-sample.json", {"total": total, "idle": idle})
     memory = meminfo()
     # Disks and network interfaces are not uploaded: a mining rig's list only needs CPU, memory,
     # temperature, power and its primary address.
@@ -1305,7 +1379,7 @@ def collect_mining():
     boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     items = []
     for p in (ROOT / "instances").glob("*"):
-        item = read(p / "stats.json")
+        item = read(stats_file(p.name))
         if item.get("boot_id") == boot and isinstance(item.get("sample_uptime"), (int, float)):
             at = now - max(0, uptime - item["sample_uptime"])
             item["observed_at"] = at
@@ -1357,7 +1431,7 @@ def publish_snapshot():
     now_uptime = uptime()
     instances = []
     for directory in sorted((ROOT / "instances").glob("*")):
-        item = read(directory / "stats.json")
+        item = read(stats_file(directory.name))
         if item and item.get("boot_id") not in (None, boot):
             item.update(process_alive=False, stats=None, stats_observed_at=None)
         if item:
