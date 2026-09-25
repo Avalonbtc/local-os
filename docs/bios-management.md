@@ -2,7 +2,7 @@
 
 The standalone `/bios` page selects a machine; `/bios/:id` links directly to its editor. Machine details also link to it. The page reads cached data immediately and explicitly queues SUM reads; it does not poll the BMC on every page visit.
 
-Install the official Linux x86_64 Supermicro SUM distribution under `tools/sum/` on the controller (the executable must be `tools/sum/sum`). The native service reads it through `RIGDECK_SUM_PATH` (set to `<repo>/tools/sum/sum` by `scripts/native/install.sh`); it must be executable by the service user. (`deploy/compose.bios.yml` was only for the old Docker deployment.) SUM is not redistributed in this repository and the application never generates or activates product keys. Machines require a configured BMC password and appropriate existing license.
+Install the official Linux x86_64 Supermicro SUM distribution under `tools/sum/` on the controller (the executable must be `tools/sum/sum`). The native service reads it through `RIGDECK_SUM_PATH` (set to `<repo>/tools/sum/sum` by `scripts/native/install.sh`); it must be executable by the service user. SUM is not redistributed in this repository and the application never generates or activates product keys. Machines require a configured BMC password and appropriate existing license.
 
 `GET /api/v1/machines/{id}/bios` returns the cached snapshot. Use the standard jobs API for a single machine:
 

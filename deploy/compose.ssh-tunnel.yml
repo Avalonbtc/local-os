@@ -1,8 +1,0 @@
-# Use only with an SSH local port forward. The published port stays on the
-# controller's loopback interface, so it is not exposed through its LAN/NAT.
-services:
-  app:
-    environment:
-      RIGDECK_ORIGIN: http://localhost:18081
-    ports:
-      - "127.0.0.1:18082:8080"

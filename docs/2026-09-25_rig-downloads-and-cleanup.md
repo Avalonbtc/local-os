@@ -147,15 +147,7 @@
   - `node_modules` 缺失、package-lock 有变化，或者是从 Windows 复制过来的，才执行 `npm ci`。
   - 前端源码比 `dist` 新时才重新构建。
 - 改完代码后执行 `bash scripts/native/restart.sh`：先编译，成功后才重启，编译失败时旧进程继续提供服务。也可以直接 `sudo systemctl restart rigdeck`，但编译失败时服务会起不来；连续失败 3 次后停止重试。
-- 从 Docker 迁移：`sudo bash scripts/native/migrate-from-docker.sh`。
-  - 导出容器数据库和 `/data`，按原 `.env` 判断访问方式，并沿用同一把主密钥和 Caddy 证书。
-  - 先在容器照常运行时安装和编译；然后停止面板容器，再导出数据库和数据，保证导出之后不会再有新的写入；最后停止数据库容器，恢复到本机 PostgreSQL（单事务，失败不会留下半截数据），再启动服务。
-  - 如果本机已有另一把主密钥或不同访问方式的配置，会直接拒绝，避免凭据无法解密。
-  - Docker 卷保留，可以回滚。
-- 这些脚本另外请了一个独立的审查代理检查，它提出的 10 个问题都已修复：
-  - 迁移期间的写入可能丢失；已有的另一把主密钥会被静默沿用；重复运行时可能恢复出半截数据库；`.env` 里带 CRLF 或引号时解析出错。
-  - 服务用户和源码属主不一致；没有 sudo 的 Debian 上无法运行（改用 runuser）；umask 泄漏到后续步骤；Caddy 丢失原来的监听地址（`--listen`）。
-  - 备份不含 Caddy 证书；没有终端时交互提问会直接退出。
+- 当前仅支持原生安装，入口为仓库根目录的 `install.sh`；旧 Docker 部署及迁移入口已移除。
 - `scripts/backup.sh` 和 `scripts/verify-backup.sh` 已改为原生版本。
 
 ### 移动端

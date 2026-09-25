@@ -12,7 +12,23 @@
 
 主控直接从源码运行：systemd 服务每次启动前自动增量编译（Rust 后端 release + 前端），所以**改完代码只要重启服务**。需要 Ubuntu 22.04 / 24.04 或 Debian 12，主控能访问每台机器的 SSH 和 BMC 网段。推荐独立主控；若使用其中一台矿机，添加时标记“主控”。
 
-在源码目录（用普通用户拥有，例如 `/home/avalon/rigdeck`）执行：
+### 一键安装
+
+在全新的 Ubuntu 22.04 / 24.04 或 Debian 12 主控上执行（需要 systemd、网络和 sudo）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Avalonbtc/local-os/main/install.sh -o /tmp/local-os-install.sh && sudo bash /tmp/local-os-install.sh
+```
+
+默认源码目录 `/opt/local-os`，使用调用 sudo 的普通用户运行；直接以 root 执行时创建 `rigdeck` 用户。安装前会让你输入并确认管理员密码（至少 12 字符），用户名为 `admin`。安装已有配置、数据库或目标目录时会停止，不会覆盖；更新现有部署使用下面的 `restart.sh`。
+
+SSH 隧道模式：在命令最后加 `--mode tunnel`。已有 Cloudflare Tunnel：加 `--mode cloudflared --host panel.example.com`，自行把域名转发到 `http://127.0.0.1:18082`；脚本不会创建 Cloudflare 隧道。可用 `--user 用户 --dir /安装目录` 自定义位置。
+
+默认 HTTPS 使用 Caddy 内部 CA，需要让访问设备解析 `rigdeck.local` 到主控 IP，并信任下文的根证书。GitHub 仓库必须可访问；首次源码编译需要数分钟。仅提供原生部署，历史文档中的容器验收记录不再是安装步骤。
+
+### 手动安装
+
+克隆仓库后，在源码目录（须属于普通用户）执行：
 
 ```bash
 sudo bash scripts/native/install.sh --host rigdeck.local
@@ -38,16 +54,6 @@ sudo bash scripts/backup.sh        # 备份数据库、配置和数据目录（�
 ```
 
 数据库迁移在服务启动时自动执行。主密钥丢失后，数据库里的 SSH/BMC 凭据无法解密，请单独备份 `/etc/rigdeck/master.key`。
-
-### 从原来的 Docker 部署迁移
-
-在原来的部署目录（有 `compose.yml`、`.env`、`secrets/master.key`）执行：
-
-```bash
-sudo bash scripts/native/migrate-from-docker.sh
-```
-
-脚本会导出容器里的数据库和数据目录（软件包、BIOS 快照），按原来的访问方式（HTTPS / SSH 隧道 / cloudflared）安装原生环境，沿用同一把主密钥和 Caddy 证书，停止容器后恢复到本机 PostgreSQL 18 并启动服务。Docker 卷不会删除；回滚执行 `sudo systemctl disable --now rigdeck caddy && docker compose up -d`。确认正常后，`compose.yml`、`Dockerfile`、`deploy/compose.*.yml`、`deploy/Caddyfile` 就不再使用，可以删除。
 
 ## 接入机器并应用飞行表
 

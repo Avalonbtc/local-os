@@ -1,5 +1,7 @@
 # 验收记录
 
+> 历史验证记录。当前安装仅使用 [原生安装入口](../README.md#一键安装)，下文 Docker 部署结果不代表当前安装方式，相关生产部署脚本已移除。
+
 日期：2026-09-23（Asia/Shanghai）。以下记录区分隔离环境验证和真实服务器验收，不把合成统计当作实际挖矿能力。
 
 ## 已执行
@@ -42,8 +44,6 @@ python3 tests/dev_server.py --work /tmp/rigdeck-test
 python3 tests/lab/run.py --work /tmp/rigdeck-test
 RIGDECK_LAB=1 npm --prefix frontend run test:e2e
 python3 tests/failure_lab.py --work /tmp/rigdeck-test
-docker build -t rigdeck:local .
-python3 tests/deploy_smoke.py --work /tmp/rigdeck-test
 (cd frontend && RIGDECK_PROD=1 npx playwright test tests/production.spec.ts)
 ```
 
