@@ -33,9 +33,10 @@ import { Link, useNavigate } from "react-router-dom";
 import {
   data,
   isFresh,
-  serverNow,
   latest,
   machinePower,
+  MINER_FRESH_SECONDS,
+  minerStatsFresh,
   useMachines,
   useRefresh,
   useFleetTelemetry,
@@ -93,15 +94,10 @@ function model(
   const systemData = online ? data(system?.data) : {};
   const reportedInstances = data(mining?.data).instances;
   const instances: Record<string, any>[] =
-    isFresh(mining) && Array.isArray(reportedInstances)
+    isFresh(mining, MINER_FRESH_SECONDS) && Array.isArray(reportedInstances)
       ? reportedInstances
       : [];
-  const active = instances.filter(
-    (instance) =>
-      instance.desired === "running" &&
-      instance.process_alive &&
-      serverNow() / 1000 - (instance.stats_observed_at ?? 0) < 35,
-  );
+  const active = instances.filter(minerStatsFresh);
   const minerUptimes = active
     .map((instance) => instance.stats?.uptime)
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
@@ -197,13 +193,7 @@ function rateParts(hs: number) {
   const [value, unit] = hashrate(hs).split(" ");
   return { value, unit };
 }
-function running(instance: Record<string, any>) {
-  return (
-    instance.desired === "running" &&
-    instance.process_alive &&
-    serverNow() / 1000 - (instance.stats_observed_at ?? 0) < 35
-  );
-}
+const running = minerStatsFresh;
 function coinOf(instance: Record<string, any>) {
   return String(instance.stats?.coin ?? instance.configured_coin ?? "?").toUpperCase();
 }

@@ -333,11 +333,19 @@ systemctl restart rigdeck-watchdog.service
         action: &Value,
     ) -> Result<()> {
         if action["kind"] == "apply" {
+            // Nothing has reached the rig's operation queue yet, so every failure up to
+            // `send_operation` is definite ("failed", lock released), never "unknown".
             let dependencies = self
                 .run_root(m, c, &format!("sh -c {}", shell_quote(DEPENDENCIES)), 250)
-                .await?;
+                .await
+                .map_err(|e| match e {
+                    Error::Unavailable(message) => {
+                        Error::Validation(format!("安装运行依赖时连接中断，未开始部署：{message}"))
+                    }
+                    other => other,
+                })?;
             if dependencies.exit_code != Some(0) {
-                return Err(Error::Unavailable(format!(
+                return Err(Error::Validation(format!(
                     "运行依赖安装失败（软件源刷新限时 90 秒，安装限时 120 秒）：{} {}",
                     dependencies.stderr, dependencies.stdout
                 )));

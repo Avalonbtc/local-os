@@ -364,7 +364,10 @@ pub fn from_snapshot(raw: &Value, now: chrono::DateTime<Utc>) -> Option<ParsedSn
                 let t = epoch(at(sample));
                 item["observed_at"] = serde_json::json!(t);
                 if !item["stats_observed_at"].is_null() {
-                    item["stats_observed_at"] = serde_json::json!(t);
+                    // Runtime ≥ 0.3.2 keeps the last good miner numbers through one failed API
+                    // read and says when they were taken; older runtimes read them every sample.
+                    let read_at = item["stats_uptime"].as_f64().unwrap_or(sample);
+                    item["stats_observed_at"] = serde_json::json!(epoch(at(read_at)));
                 }
             }
             _ => {
@@ -553,6 +556,18 @@ mod snapshot_tests {
         assert_eq!(parsed.events[0]["at"], json!(1_000_000.0 - 15.0));
         assert_eq!(parsed.events[1]["at"], json!(7.0));
         assert_eq!(parsed.policy_digest.as_deref(), Some("d"));
+    }
+
+    #[test]
+    fn kept_miner_numbers_age_from_when_they_were_read() {
+        let now = chrono::DateTime::<Utc>::from_timestamp(1_000_000, 0).unwrap();
+        let mut snapshot = raw(1000.0, 995.0);
+        // Sampled at uptime 993 after a failed API read; the numbers kept are from uptime 983.
+        snapshot["snapshot"]["mining"]["instances"][0]["stats_uptime"] = json!(983.0);
+        let parsed = from_snapshot(&snapshot, now).unwrap();
+        let a = &parsed.mining["instances"][0];
+        assert_eq!(a["observed_at"], json!(1_000_000.0 - 7.0));
+        assert_eq!(a["stats_observed_at"], json!(1_000_000.0 - 17.0));
     }
 
     #[test]

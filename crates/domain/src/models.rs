@@ -374,6 +374,8 @@ pub struct ClaimedTask {
     pub action: Value,
     pub lease: Uuid,
     pub reconcile: bool,
+    /// Automatic re-queries already spent on this target after lost connections.
+    pub attempts: i32,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Observation {

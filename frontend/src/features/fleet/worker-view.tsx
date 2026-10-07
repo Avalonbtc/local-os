@@ -9,6 +9,7 @@ import {
   data,
   isFresh,
   machinePower,
+  minerStatsFresh,
   serverNow,
   unwrap,
   type Data,
@@ -66,9 +67,7 @@ function tempClass(value?: number, limit = 85) {
   if (value === undefined) return "";
   return value > limit ? "hot" : value > limit - 10 ? "warm" : "ok";
 }
-export function isRunning(i: Data) {
-  return i.desired === "running" && i.process_alive && serverNow() / 1000 - (i.stats_observed_at ?? 0) < 35;
-}
+export const isRunning = minerStatsFresh;
 const coinOf = (i: Data) => String(i.stats?.coin ?? i.configured_coin ?? "?").toUpperCase();
 
 /** Hashrate per GPU id, from every running miner that reports per-card rates. */

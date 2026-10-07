@@ -138,11 +138,18 @@ impl App {
             if ["succeeded", "failed", "cancelled", "unknown", "missing"]
                 .contains(&remote.status.as_str())
             {
-                let status = if remote.status == "missing" {
-                    "unknown"
-                } else {
-                    &remote.status
-                };
+                let status = match remote.status.as_str() {
+                    // Re-queried after a lost connection and the rig has no record: the start
+                    // request never arrived (the first re-query waits 30 s for one in flight).
+                    "missing" if task.reconcile => {
+                        remote.error = Some("操作没有送达矿机，未执行；可以重新下发".into());
+                        "failed"
+                    }
+                    "missing" => "unknown",
+                    other => other,
+                }
+                .to_string();
+                let status = status.as_str();
                 return self
                     .finish_with_retry(task.target.id, task.lease, status, &remote)
                     .await;

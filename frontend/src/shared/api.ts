@@ -141,6 +141,25 @@ export function latest(
   }
   return index.get(`${id}\u0000${kind}`);
 }
+/**
+ * How long a miner's numbers count as current. They pass through three 10 s loops before this
+ * page sees them (rig watchdog sample, controller SSH poll, this page's poll), so 30–35 s is a
+ * normal age; 35 s made running miners flash "waiting for stats".
+ */
+export const MINER_FRESH_SECONDS = 60;
+/** The rig sampled this miner recently (process state and phase are current). */
+export function minerSampleFresh(instance: Data) {
+  return typeof instance.observed_at === "number" && serverNow() / 1000 - instance.observed_at < MINER_FRESH_SECONDS;
+}
+/** The miner is meant to run, its process is alive and its hashrate was read recently. */
+export function minerStatsFresh(instance: Data) {
+  return (
+    instance.desired === "running" &&
+    !!instance.process_alive &&
+    typeof instance.stats_observed_at === "number" &&
+    serverNow() / 1000 - instance.stats_observed_at < MINER_FRESH_SECONDS
+  );
+}
 export function isFresh(o: Observation | undefined, seconds = 35) {
   return (
     !!o &&

@@ -93,6 +93,15 @@ pub trait JobRepository: Send + Sync {
         status: &str,
         remote: &RemoteOperation,
     ) -> Result<()>;
+    /// The connection broke after the operation may have reached the rig: keep the host lock
+    /// and re-query the same operation id once `delay_seconds` have passed.
+    async fn defer_reconcile(
+        &self,
+        target: Uuid,
+        lease: Uuid,
+        error: &str,
+        delay_seconds: i64,
+    ) -> Result<()>;
     async fn expire_leases(&self) -> Result<()>;
     async fn resolve_target(&self, id: Uuid, input: &ResolveTarget, actor: &Actor) -> Result<()>;
 }
