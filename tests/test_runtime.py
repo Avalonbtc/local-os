@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import signal
 import socket
+import subprocess
 import tarfile
 import tempfile
 import time
@@ -216,6 +217,63 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(self.rt.state("cpu1")["desired"], "stopped")
         self.assertFalse(self.rt.screen_alive("cpu1"))
         self.assertFalse(self.rt.sample("cpu1")["process_alive"])
+
+    def test_sampling_does_not_contact_unresponsive_screen_server(self):
+        self.start(self.config())
+        miner = self.rt.state("cpu1")["child_pid"]
+        supervisor = self.rt.state("cpu1")["supervisor_pid"]
+        screen_pid = int(Path(f"/proc/{supervisor}/stat").read_text().rsplit(")", 1)[1].split()[1])
+        os.kill(screen_pid, signal.SIGSTOP)
+        try:
+            # A stopped screen cannot answer IPC. Sampling must still read the miner API.
+            started = time.monotonic()
+            with patch.object(self.rt.subprocess, "run", side_effect=AssertionError("screen IPC during sampling")):
+                self.assertTrue(self.rt.screen_alive("cpu1"))
+                sample = self.rt.sample("cpu1")
+            self.assertLess(time.monotonic() - started, 1)
+            self.assertEqual(sample["stats"]["hashrate_hs"], 12500)
+            self.assertEqual(self.rt.state("cpu1")["child_pid"], miner)
+        finally:
+            os.kill(screen_pid, signal.SIGCONT)
+
+    def test_stale_screen_socket_does_not_claim_a_live_session(self):
+        directory = Path(self.temp.name) / "screen-sockets"
+        directory.mkdir()
+        endpoint = socket.socket(socket.AF_UNIX)
+        endpoint.bind(str(directory / f"{os.getpid()}.{self.rt.session('cpu1')}"))
+        try:
+            with patch.dict(os.environ, {"SCREENDIR": str(directory)}):
+                self.assertFalse(self.rt.screen_alive("cpu1"))
+        finally:
+            endpoint.close()
+
+    def test_hung_screen_control_client_is_killed_and_reaped(self):
+        directory = Path(self.temp.name) / "bin"
+        directory.mkdir()
+        pidfile = directory / "client.pid"
+        client = directory / "screen"
+        client.write_text(f"#!/usr/bin/python3\nimport os,time\nopen({str(pidfile)!r},'w').write(str(os.getpid()))\ntime.sleep(60)\n")
+        client.chmod(0o755)
+        started = time.monotonic()
+        with patch.dict(os.environ, {"PATH": f"{directory}:{os.environ['PATH']}"}):
+            result = self.rt.screen_command("cpu1", "quit")
+        self.assertEqual(result.returncode, 124)
+        self.assertLess(time.monotonic() - started, 8)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int(pidfile.read_text()), 0)
+
+    def test_stop_falls_back_when_screen_control_times_out(self):
+        self.start(self.config())
+        before = self.rt.state("cpu1")
+        original_run = self.rt.subprocess.run
+        def no_control(command, *args, **kwargs):
+            if command[0] == "screen" and "-X" in command:
+                raise subprocess.TimeoutExpired(command, 5)
+            return original_run(command, *args, **kwargs)
+        with patch.object(self.rt.subprocess, "run", side_effect=no_control):
+            self.rt.stop("cpu1")
+        self.assertEqual(self.rt.state("cpu1")["phase"], "stopped")
+        self.assertFalse(self.rt.owned(before["child_pid"], before["child_start"]))
 
     def test_crashed_child_recovers_without_controller(self):
         self.start(self.config())

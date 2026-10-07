@@ -18,6 +18,7 @@ import re
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tarfile
@@ -26,7 +27,7 @@ import time
 import urllib.request
 import uuid
 
-VERSION = "0.3.3"
+VERSION = "0.3.4"
 ROOT = Path(os.environ.get("RIG_RUNTIME_ROOT", "/var/lib/rigdeck"))
 # Controller reads this with a plain `cat` (no Python start-up, no sudo). /run is tmpfs.
 SNAPSHOT_DIR = Path(os.environ.get("RIG_SNAPSHOT_DIR", "/run/rigdeck"))
@@ -179,11 +180,42 @@ def session(name):
 
 
 def screen_alive(name):
-    return subprocess.run(["screen", "-S", session(name), "-Q", "windows"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    # Never query screen's control socket from the telemetry loop. A stalled -Q client
+    # can block the server in recvmsg, stopping console logging and every later query.
+    # Inspect the socket and its owning server instead; no connection is opened.
+    account = pwd.getpwuid(os.geteuid()).pw_name
+    directories = [Path(os.environ["SCREENDIR"])] if os.environ.get("SCREENDIR") else [
+        Path("/run/screen") / f"S-{account}", Path("/var/run/screen") / f"S-{account}",
+    ]
+    expected = session(name)
+    for directory in directories:
+        for endpoint in directory.glob(f"*.{expected}"):
+            try:
+                pid = int(endpoint.name.split(".", 1)[0])
+                proc = Path("/proc") / str(pid)
+                info = endpoint.stat()
+                if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.geteuid():
+                    continue
+                if proc.stat().st_uid != os.geteuid() or (proc / "exe").resolve().name != "screen":
+                    continue
+                args = (proc / "cmdline").read_bytes().split(b"\0")
+                status = (proc / "stat").read_text().rsplit(")", 1)[1].split()[0]
+                if status not in ("Z", "X") and args[1:3] == [b"-dmS", expected.encode()]:
+                    return True
+            except (OSError, ValueError, IndexError):
+                continue  # Stale socket, PID reuse, or server exiting during the check.
+    return False
 
 
 def screen_command(name, *args):
-    return subprocess.run(["screen", "-S", session(name), "-p", "miner", "-X", *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    command = ["screen", "-S", session(name), "-p", "miner", "-X", *args]
+    try:
+        return subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+    except subprocess.TimeoutExpired:
+        # subprocess.run kills and reaps this client only, never the miner's screen
+        # server. stop() must continue its PID/start-identity-checked signal fallback.
+        emit("warning", "screen_control_timeout", "screen 控制超时，继续按进程身份处理", name)
+        return subprocess.CompletedProcess(command, 124)
 
 
 def current_config(name, version=None):
@@ -213,7 +245,7 @@ def start(name, version=None, preserve=False):
                phase="starting", warm_until=time.time() + config.get("warmup_seconds", 60),
                restarts=old.get("restarts", []) if preserve else [], last_error=None)
         log = directory / "console.log"
-        subprocess.run(["screen", "-dmS", session(name), "-t", "miner", "-L", "-Logfile", str(log), sys.executable, SELF, "supervise", name], check=True)
+        subprocess.run(["screen", "-dmS", session(name), "-t", "miner", "-L", "-Logfile", str(log), sys.executable, SELF, "supervise", name], check=True, timeout=10)
 
 
 def stop(name, desired="stopped", maintenance=False):
