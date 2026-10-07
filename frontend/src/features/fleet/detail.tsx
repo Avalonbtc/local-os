@@ -26,8 +26,9 @@ import {
   useMachines,
   useTelemetry,
   latest,
-  serverNow,
   machinePower,
+  minerSampleFresh,
+  minerStatsFresh,
   submitJob,
   type Data,
 } from "../../shared/api";
@@ -167,7 +168,7 @@ export function MachineDetail() {
             render: (_, i) => (
               <Status
                 value={
-                  serverNow() / 1000 - (i.observed_at ?? 0) < 35
+                  minerSampleFresh(i)
                     ? (i.phase === "running" ? "挖矿中" : i.phase)
                     : "数据过期"
                 }
@@ -178,7 +179,7 @@ export function MachineDetail() {
             title: "算力 / 算法",
             key: "rate",
             render: (_, i) =>
-              serverNow() / 1000 - (i.stats_observed_at ?? 0) < 35
+              minerStatsFresh(i)
                 ? `${hashrate(i.stats?.hashrate_hs)} / ${i.stats?.algorithm ?? "未知"}`
                 : "—",
           },

@@ -679,6 +679,21 @@
           }
         ]
       },
+      "FarmSettings": {
+        "description": "Farm-wide preferences edited under 设定 (HiveOS keeps the electricity tariff in farm settings).",
+        "properties": {
+          "electricity_price": {
+            "description": "Electricity price per kWh in yuan; the summary bar's daily cost estimate uses it.",
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "electricity_price"
+        ],
+        "title": "FarmSettings",
+        "type": "object"
+      },
       "FlightInput": {
         "properties": {
           "expected_version": {
@@ -3049,6 +3064,98 @@
               }
             },
             "description": "Content addressed artifact"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/settings/farm": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FarmSettings"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Forbidden or invalid CSRF"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict"
+          },
+          "503": {
+            "description": "Dependency unavailable"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FarmSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FarmSettings"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Forbidden or invalid CSRF"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict"
+          },
+          "503": {
+            "description": "Dependency unavailable"
           }
         },
         "security": [

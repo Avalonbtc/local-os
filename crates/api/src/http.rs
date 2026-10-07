@@ -101,6 +101,10 @@ pub fn router(state: ApiState, static_dir: &str) -> Router {
         .route("/machines/{id}/instances/{instance}/log", get(miner_log))
         .route("/audit", get(audit))
         .route(
+            "/settings/farm",
+            get(farm_settings).put(farm_settings_update),
+        )
+        .route(
             "/openapi.json",
             get(|| async { Json(crate::openapi::document()) }),
         )
@@ -491,6 +495,16 @@ async fn bmc(
 }
 async fn audit(State(s): State<ApiState>) -> ApiResult<Json<Vec<AuditEvent>>> {
     Ok(Json(s.app.audit_events().await?))
+}
+async fn farm_settings(State(s): State<ApiState>) -> ApiResult<Json<FarmSettings>> {
+    Ok(Json(s.app.farm_settings().await?))
+}
+async fn farm_settings_update(
+    State(s): State<ApiState>,
+    Extension(session): Extension<Session>,
+    Json(input): Json<FarmSettings>,
+) -> ApiResult<Json<FarmSettings>> {
+    Ok(Json(s.app.save_farm_settings(&session.actor, input).await?))
 }
 async fn adapters(State(s): State<ApiState>) -> Json<Vec<AdapterDescription>> {
     Json(s.app.adapter_descriptions())

@@ -26,6 +26,14 @@ async fn postgres_migrations_catalog_queue_leases_and_retention() {
         name,
         token_id: None,
     };
+    store
+        .save_farm_settings(&json!({"electricity_price":0.42}), &actor)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.farm_settings().await.unwrap(),
+        Some(json!({"electricity_price":0.42}))
+    );
     let symbol = format!("COIN-{}", Uuid::new_v4());
     let mut saves = Vec::new();
     for n in 0..4 {
@@ -172,6 +180,20 @@ async fn postgres_migrations_catalog_queue_leases_and_retention() {
             .await
             .is_err()
     );
+    // A lost connection hands the target back to the worker after a delay; the lock stays.
+    store
+        .defer_reconcile(resumed.target.id, resumed.lease, "SSH 连接中断", 30)
+        .await
+        .unwrap();
+    assert!(store.claim().await.unwrap().is_none());
+    sqlx::query("UPDATE job_targets SET retry_at=now()-interval '1 second' WHERE id=$1")
+        .bind(resumed.target.id)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    let resumed = store.claim().await.unwrap().unwrap();
+    assert!(resumed.reconcile);
+    assert_eq!(resumed.attempts, 1);
     store
         .finish(
             resumed.target.id,

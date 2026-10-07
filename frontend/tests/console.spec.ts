@@ -49,6 +49,7 @@ test("login, custom coin from wallet, navigation, token revocation and responsiv
   for (const gone of ["/coins", "/pools", "/miners", "/jobs"])
     await expect(page.locator(`nav.rd-tabs a[href="${gone}"]`)).toHaveCount(0);
   const tokenName = `browser-validation-${Date.now()}`;
+  await page.getByRole("tab", { name: "AI / API 令牌", exact: true }).click();
   await page.getByRole("textbox", { name: "令牌名称" }).fill(tokenName);
   await page.getByRole("button", { name: "创建令牌" }).click();
   await expect(page.getByRole("dialog")).toBeVisible();

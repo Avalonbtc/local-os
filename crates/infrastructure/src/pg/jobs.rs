@@ -66,7 +66,7 @@ impl JobRepository for PgStore {
         if !locked {
             return Ok(None);
         }
-        let row=sqlx::query("SELECT to_jsonb(t)-'lease'-'lease_until'-'started_at'-'finished_at' target,j.action,t.status FROM job_targets t JOIN jobs j ON j.id=t.job_id JOIN machines m ON m.id=t.machine_id WHERE m.deleted_at IS NULL AND (t.status='reconciling' OR (t.status='queued' AND NOT j.cancel_requested AND NOT EXISTS(SELECT 1 FROM machine_locks l WHERE l.machine_id=t.machine_id) AND (NOT j.canary OR t.ordinal=0 OR EXISTS(SELECT 1 FROM job_targets c WHERE c.job_id=t.job_id AND c.ordinal=0 AND c.status='succeeded')) AND (SELECT count(*) FROM job_targets c WHERE c.job_id=t.job_id AND c.status IN ('running','reconciling')) < j.concurrency AND (NOT m.is_controller OR j.action->>'kind'<>'power' OR NOT EXISTS(SELECT 1 FROM job_targets c WHERE c.job_id=t.job_id AND c.id<>t.id AND c.status NOT IN ('succeeded','failed','cancelled','blocked'))))) ORDER BY CASE WHEN t.status='reconciling' THEN 0 ELSE 1 END,j.created_at,t.ordinal FOR UPDATE OF t SKIP LOCKED LIMIT 1").fetch_optional(&mut *tx).await.map_err(db)?;
+        let row=sqlx::query("SELECT to_jsonb(t)-'lease'-'lease_until'-'started_at'-'finished_at' target,j.action,t.status,t.attempts FROM job_targets t JOIN jobs j ON j.id=t.job_id JOIN machines m ON m.id=t.machine_id WHERE m.deleted_at IS NULL AND ((t.status='reconciling' AND (t.retry_at IS NULL OR t.retry_at<=now())) OR (t.status='queued' AND NOT j.cancel_requested AND NOT EXISTS(SELECT 1 FROM machine_locks l WHERE l.machine_id=t.machine_id) AND (NOT j.canary OR t.ordinal=0 OR EXISTS(SELECT 1 FROM job_targets c WHERE c.job_id=t.job_id AND c.ordinal=0 AND c.status='succeeded')) AND (SELECT count(*) FROM job_targets c WHERE c.job_id=t.job_id AND c.status IN ('running','reconciling')) < j.concurrency AND (NOT m.is_controller OR j.action->>'kind'<>'power' OR NOT EXISTS(SELECT 1 FROM job_targets c WHERE c.job_id=t.job_id AND c.id<>t.id AND c.status NOT IN ('succeeded','failed','cancelled','blocked'))))) ORDER BY CASE WHEN t.status='reconciling' THEN 0 ELSE 1 END,j.created_at,t.ordinal FOR UPDATE OF t SKIP LOCKED LIMIT 1").fetch_optional(&mut *tx).await.map_err(db)?;
         let Some(row) = row else { return Ok(None) };
         let target: JobTarget = decode(row.get("target"))?;
         let reconcile = row.get::<String, _>("status") == "reconciling";
@@ -84,6 +84,7 @@ impl JobRepository for PgStore {
             action: row.get("action"),
             lease,
             reconcile,
+            attempts: row.get("attempts"),
         }))
     }
     async fn heartbeat(&self, target: Uuid, lease: Uuid) -> Result<bool> {
@@ -124,6 +125,21 @@ impl JobRepository for PgStore {
         }
         tx.commit().await.map_err(db)
     }
+    async fn defer_reconcile(
+        &self,
+        target: Uuid,
+        lease: Uuid,
+        error: &str,
+        delay_seconds: i64,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        queue_lock(&mut tx).await?;
+        // The machine lock stays: the rig may still be running the operation.
+        let job:Option<Uuid>=sqlx::query_scalar("UPDATE job_targets SET status='reconciling',lease=NULL,lease_until=NULL,retry_at=now()+make_interval(secs=>$4::double precision),attempts=attempts+1,error=$3 WHERE id=$1 AND lease=$2 AND status='running' RETURNING job_id").bind(target).bind(lease).bind(error).bind(delay_seconds).fetch_optional(&mut *tx).await.map_err(db)?;
+        let job = job.ok_or_else(|| Error::Conflict("任务租约已失效，必须对账".into()))?;
+        update_job(&mut tx, job).await?;
+        tx.commit().await.map_err(db)
+    }
     async fn expire_leases(&self) -> Result<()> {
         sqlx::query("UPDATE job_targets SET status='reconciling',lease=NULL WHERE status='running' AND lease_until<now()").execute(&self.pool).await.map_err(db)?;
         // Repair interrupted aggregate updates from older versions without redispatching targets.
@@ -146,7 +162,7 @@ impl JobRepository for PgStore {
         } else {
             input.decision.as_str()
         };
-        let job:Uuid=sqlx::query_scalar("UPDATE job_targets SET status=$2,lease=NULL,error=$3 WHERE id=$1 AND status='unknown' RETURNING job_id").bind(id).bind(state).bind(&input.note).fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(||Error::Conflict("只有结果不明的任务可对账或人工核实".into()))?;
+        let job:Uuid=sqlx::query_scalar("UPDATE job_targets SET status=$2,lease=NULL,error=$3,retry_at=NULL,attempts=0 WHERE id=$1 AND status='unknown' RETURNING job_id").bind(id).bind(state).bind(&input.note).fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(||Error::Conflict("只有结果不明的任务可对账或人工核实".into()))?;
         if state != "reconciling" {
             sqlx::query("DELETE FROM machine_locks WHERE target_id=$1")
                 .bind(id)

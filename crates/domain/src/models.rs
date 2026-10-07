@@ -374,6 +374,8 @@ pub struct ClaimedTask {
     pub action: Value,
     pub lease: Uuid,
     pub reconcile: bool,
+    /// Automatic re-queries already spent on this target after lost connections.
+    pub attempts: i32,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Observation {
@@ -382,6 +384,28 @@ pub struct Observation {
     pub observed_at: DateTime<Utc>,
     pub data: Value,
     pub error: Option<String>,
+}
+/// Farm-wide preferences edited under 设定 (HiveOS keeps the electricity tariff in farm settings).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct FarmSettings {
+    /// Electricity price per kWh in yuan; the summary bar's daily cost estimate uses it.
+    pub electricity_price: f64,
+}
+impl Default for FarmSettings {
+    fn default() -> Self {
+        // The value the console used before the price became a setting.
+        Self {
+            electricity_price: 0.56,
+        }
+    }
+}
+impl FarmSettings {
+    pub fn validate(&self) -> crate::Result<()> {
+        if !self.electricity_price.is_finite() || !(0.0..=100.0).contains(&self.electricity_price) {
+            return Err(crate::Error::Validation("电价需在 0–100 元/度之间".into()));
+        }
+        Ok(())
+    }
 }
 /// One line of the HiveOS-style per-machine message feed: runtime events, job results and audit.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

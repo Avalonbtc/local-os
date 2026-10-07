@@ -105,7 +105,7 @@ fn unzip3<A, B, C>(items: impl Iterator<Item = (A, B, C)>) -> (Vec<A>, Vec<B>, V
 const MESSAGES: &str = "SELECT row FROM (\
  (SELECT jsonb_build_object('id',e.id,'at',e.at,'level',e.level,'source','runtime','kind',e.kind,'instance',e.instance,'message',e.message,'detail',e.detail) AS row, e.at FROM machine_events e WHERE e.machine_id=$1 ORDER BY e.at DESC LIMIT $2)\
  UNION ALL\
- (SELECT jsonb_build_object('id',t.id,'at',COALESCE(t.finished_at,t.started_at,j.created_at),'status',t.status,'source','job','kind',j.action->>'kind','action',j.action-'snapshot','actor',j.actor,'job_id',j.id,'target_id',t.id,'error',t.error,'output',left(t.output,4096),'output_truncated',t.output_truncated OR length(t.output)>4096) AS row, COALESCE(t.finished_at,t.started_at,j.created_at) AS at FROM job_targets t JOIN jobs j ON j.id=t.job_id WHERE t.machine_id=$1 ORDER BY 2 DESC LIMIT $2)\
+ (SELECT jsonb_build_object('id',t.id,'at',COALESCE(t.finished_at,t.started_at,j.created_at),'status',t.status,'source','job','kind',j.action->>'kind','action',j.action-'snapshot','actor',j.actor,'job_id',j.id,'target_id',t.id,'error',t.error,'waiting',(t.status='queued' AND EXISTS(SELECT 1 FROM machine_locks l WHERE l.machine_id=t.machine_id AND l.target_id<>t.id)),'output',left(t.output,4096),'output_truncated',t.output_truncated OR length(t.output)>4096) AS row, COALESCE(t.finished_at,t.started_at,j.created_at) AS at FROM job_targets t JOIN jobs j ON j.id=t.job_id WHERE t.machine_id=$1 ORDER BY 2 DESC LIMIT $2)\
  UNION ALL\
  (SELECT jsonb_build_object('id',a.id::text,'at',a.created_at,'source','audit','kind',a.action,'actor',a.actor,'detail',a.detail) AS row, a.created_at AS at FROM audit_events a WHERE a.target=$1::text AND a.action NOT IN ('terminal.open','fleet.connection_test') ORDER BY a.created_at DESC LIMIT $2)\
 ) m ORDER BY at DESC LIMIT $2";
@@ -173,7 +173,11 @@ fn message_from_row(row: Value) -> Result<MachineMessage> {
                 "unknown" => ("warning", "结果不明，需要核实"),
                 "blocked" => ("warning", "首台验证未通过，未执行"),
                 "cancelled" => ("warning", "已取消"),
-                "running" | "reconciling" => ("info", "执行中"),
+                "running" => ("info", "执行中"),
+                "reconciling" => ("info", "连接中断，正在自动核对结果"),
+                _ if row["waiting"].as_bool() == Some(true) => {
+                    ("info", "排队中，等这台矿机上一个操作结束")
+                }
                 _ => ("info", "排队中"),
             };
             let mut message = format!("{}：{}", job_label(&row), text);

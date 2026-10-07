@@ -33,11 +33,13 @@ import { Link, useNavigate } from "react-router-dom";
 import {
   data,
   isFresh,
-  serverNow,
   latest,
   machinePower,
+  MINER_FRESH_SECONDS,
+  minerStatsFresh,
   useMachines,
   useRefresh,
+  useFarmSettings,
   useFleetTelemetry,
   type Machine,
   type Observation,
@@ -93,15 +95,10 @@ function model(
   const systemData = online ? data(system?.data) : {};
   const reportedInstances = data(mining?.data).instances;
   const instances: Record<string, any>[] =
-    isFresh(mining) && Array.isArray(reportedInstances)
+    isFresh(mining, MINER_FRESH_SECONDS) && Array.isArray(reportedInstances)
       ? reportedInstances
       : [];
-  const active = instances.filter(
-    (instance) =>
-      instance.desired === "running" &&
-      instance.process_alive &&
-      serverNow() / 1000 - (instance.stats_observed_at ?? 0) < 35,
-  );
+  const active = instances.filter(minerStatsFresh);
   const minerUptimes = active
     .map((instance) => instance.stats?.uptime)
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
@@ -197,13 +194,7 @@ function rateParts(hs: number) {
   const [value, unit] = hashrate(hs).split(" ");
   return { value, unit };
 }
-function running(instance: Record<string, any>) {
-  return (
-    instance.desired === "running" &&
-    instance.process_alive &&
-    serverNow() / 1000 - (instance.stats_observed_at ?? 0) < 35
-  );
-}
+const running = minerStatsFresh;
 function coinOf(instance: Record<string, any>) {
   return String(instance.stats?.coin ?? instance.configured_coin ?? "?").toUpperCase();
 }
@@ -211,6 +202,7 @@ function coinOf(instance: Record<string, any>) {
 export function FleetSummary() {
   const machines = useMachines();
   const telemetry = useFleetTelemetry();
+  const price = useFarmSettings().data?.electricity_price;
   const rows = fleetRows(machines.data, telemetry.data);
   const online = rows.filter((row) => row.online).length;
   const threads = rows.reduce((sum, row) => sum + (row.logicalCpus ?? 0), 0);
@@ -239,7 +231,8 @@ export function FleetSummary() {
     }
   }
   const rateCards = [...rates.values()].sort((a, b) => b.rigs.size - a.rigs.size || b.hs - a.hs);
-  const dailyCost = powerReadings.length ? (totalWatts / 1000) * 24 * 0.56 : undefined;
+  const dailyCost =
+    powerReadings.length && price !== undefined ? (totalWatts / 1000) * 24 * price : undefined;
   return (
     <section className="hive-farm-summary" aria-label="矿场统计">
       <div className="hive-farm-summary-inner">
@@ -317,18 +310,19 @@ export function FleetSummary() {
             <IconServer size={13} />BMC 在线
           </span>
         </div>
-        <div
-          className="hive-stat"
-          title={`按当前软件功耗持续 24 小时 × 0.56 元/度估算，不含电源损耗；不是当天累计电费。`}
+        <Link
+          className="hive-stat hive-stat-link"
+          to="/settings?tab=farm"
+          title={`按当前软件功耗持续 24 小时 × ${price === undefined ? "电价" : `${number(price, 4)} 元/度`}估算，不含电源损耗；不是当天累计电费。点击修改电价`}
         >
           <div className="hive-stat-line">
             <strong>{dailyCost === undefined ? "—" : `¥${number(dailyCost, 2)}`}</strong>
             <small>/日</small>
           </div>
           <span>
-            <IconYuan size={13} />预估电费 <small>0.56 元/度</small>
+            <IconYuan size={13} />预估电费 <small>{price === undefined ? "—" : number(price, 4)} 元/度</small>
           </span>
-        </div>
+        </Link>
       </div>
     </section>
   );

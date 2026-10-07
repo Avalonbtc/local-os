@@ -26,7 +26,7 @@ import time
 import urllib.request
 import uuid
 
-VERSION = "0.3.1"
+VERSION = "0.3.3"
 ROOT = Path(os.environ.get("RIG_RUNTIME_ROOT", "/var/lib/rigdeck"))
 # Controller reads this with a plain `cat` (no Python start-up, no sudo). /run is tmpfs.
 SNAPSHOT_DIR = Path(os.environ.get("RIG_SNAPSHOT_DIR", "/run/rigdeck"))
@@ -468,6 +468,11 @@ def normalize(config, raw):
     return base
 
 
+# A miner API that misses one read (busy at 100 % CPU, 3 s timeout) keeps its last numbers this
+# long, so the console does not flash "waiting for stats" while the miner is hashing.
+STATS_GRACE_SECONDS = 45
+
+
 def sample(name):
     now = time.time()
     s = state(name)
@@ -487,8 +492,18 @@ def sample(name):
                 raw = native_stats(cfg)
             cache["stats"] = normalize(cfg, raw)
             cache["stats_observed_at"] = now
+            cache["stats_uptime"] = cache["sample_uptime"]
         except (subprocess.SubprocessError, ValueError, OSError) as error:
             cache["error"] = str(error)[:2000]
+            try:
+                previous = read(stats_file(name))
+            except ValueError:
+                previous = {}
+            kept = previous.get("stats_uptime")
+            if (previous.get("stats") and previous.get("boot_id") == cache["boot_id"] and isinstance(kept, (int, float))
+                    and cache["sample_uptime"] - kept < STATS_GRACE_SECONDS):
+                # `stats_uptime` still says when these numbers were read, so they age honestly.
+                cache.update(stats=previous["stats"], stats_observed_at=previous.get("stats_observed_at"), stats_uptime=kept)
     atomic_volatile(stats_file(name), cache)
     return cache
 
@@ -1384,7 +1399,8 @@ def collect_mining():
             at = now - max(0, uptime - item["sample_uptime"])
             item["observed_at"] = at
             if item.get("stats_observed_at") is not None:
-                item["stats_observed_at"] = at
+                kept = item.get("stats_uptime")
+                item["stats_observed_at"] = now - max(0, uptime - kept) if isinstance(kept, (int, float)) else at
         elif item.get("boot_id"):
             item.update(process_alive=False, stats=None, stats_observed_at=None)
         items.append(item)

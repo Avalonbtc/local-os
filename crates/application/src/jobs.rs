@@ -3,6 +3,26 @@ use rig_domain::*;
 use std::{collections::HashSet, time::Duration};
 use uuid::Uuid;
 
+/// Actions the rig runtime records under the target's operation id (or, for bootstrap, that are
+/// idempotent installs). After a lost connection the worker re-queries them instead of leaving
+/// the machine locked until someone resolves the target by hand. BMC power and BIOS writes are
+/// excluded: their state cannot be read back by operation id.
+const AUTO_RECONCILE: &[&str] = &[
+    "apply",
+    "miner",
+    "command",
+    "adopt",
+    "gpu_oc",
+    "gpu_oc_reset",
+    "bootstrap",
+];
+/// 30 s, 60 s, 120 s, 240 s, then every 5 minutes: roughly two hours before asking a person.
+const MAX_RECONCILE_ATTEMPTS: i32 = 26;
+
+fn reconcile_delay(attempts: i32) -> i64 {
+    (30i64 << attempts.clamp(0, 4)).min(300)
+}
+
 impl App {
     pub async fn submit_job(&self, actor: &Actor, mut input: JobInput) -> Result<Uuid> {
         if input.machine_ids.is_empty()
@@ -178,6 +198,22 @@ impl App {
             }
         };
         if let Err(error) = result {
+            let kind = task.action["kind"].as_str().unwrap_or("");
+            if matches!(error, Error::Unavailable(_))
+                && AUTO_RECONCILE.contains(&kind)
+                && task.attempts < MAX_RECONCILE_ATTEMPTS
+            {
+                let delay = reconcile_delay(task.attempts);
+                let note = format!("{error}；{delay} 秒后自动重新查询矿机上的操作记录");
+                match self
+                    .repository
+                    .defer_reconcile(task.target.id, task.lease, &note, delay)
+                    .await
+                {
+                    Ok(()) => return,
+                    Err(e) => tracing::warn!(error=%e,"cannot schedule reconcile"),
+                }
+            }
             let status = if matches!(
                 error,
                 Error::Validation(_) | Error::Forbidden(_) | Error::NotFound
@@ -230,5 +266,21 @@ impl App {
             ));
         }
         self.repository.resolve_target(id, &input, actor).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reconcile_backs_off_to_five_minutes() {
+        let delays: Vec<i64> = (0..7).map(reconcile_delay).collect();
+        assert_eq!(delays, [30, 60, 120, 240, 300, 300, 300]);
+        let total: i64 = (0..MAX_RECONCILE_ATTEMPTS).map(reconcile_delay).sum();
+        assert!(
+            (6000..9000).contains(&total),
+            "about two hours, got {total} s"
+        );
     }
 }

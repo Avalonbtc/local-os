@@ -104,6 +104,31 @@ class SnapshotTests(unittest.TestCase):
         restart.assert_not_called()
         self.assertIsNone(self.rt.state(name).get("bad_reason"))
 
+    def test_one_failed_api_read_keeps_the_last_numbers_for_a_while(self):
+        rt = self.rt
+        (rt.ROOT / "instances/cpu").mkdir(parents=True)
+        clock = {"uptime": 100.0}
+        reads = iter([5.0, OSError("timed out"), OSError("timed out")])
+
+        def stats(config):
+            value = next(reads)
+            if isinstance(value, Exception):
+                raise value
+            return value
+        with patch.object(rt, "uptime", side_effect=lambda: clock["uptime"]),                 patch.object(rt, "boot_id", return_value="b1"),                 patch.object(rt, "state", return_value={"desired": "running"}),                 patch.object(rt, "current_config", return_value={"adapter": "xmrig", "api_port": 1}),                 patch.object(rt, "owned", return_value=True),                 patch.object(rt, "screen_alive", return_value=True),                 patch.object(rt, "native_stats", side_effect=stats),                 patch.object(rt, "normalize", side_effect=lambda config, raw: {"hashrate_hs": raw}):
+            good = rt.sample("cpu")
+            self.assertEqual((good["stats"], good["stats_uptime"]), ({"hashrate_hs": 5.0}, 100.0))
+            clock["uptime"] = 110.0
+            kept = rt.sample("cpu")
+            # Numbers survive one failed read, still dated to when they were read; the error stays visible.
+            self.assertEqual((kept["stats"], kept["stats_uptime"]), ({"hashrate_hs": 5.0}, 100.0))
+            self.assertEqual(kept["stats_observed_at"], good["stats_observed_at"])
+            self.assertIn("timed out", kept["error"])
+            clock["uptime"] = 160.0
+            gone = rt.sample("cpu")
+            self.assertIsNone(gone["stats"])
+            self.assertIsNone(gone.get("stats_observed_at"))
+
     def test_native_stats_are_read_in_process(self):
         body = json.dumps({"hashrate": {"total": [100]}, "algo": "rx/0", "version": "6", "results": {"shares_good": 2, "shares_total": 3}, "connection": {"pool": "p", "uptime": 5}}).encode()
 
