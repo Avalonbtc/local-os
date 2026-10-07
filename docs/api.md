@@ -23,6 +23,7 @@
 | `/api/v1/machines/{id}/history` | kind、hours 历史查询 |
 | `/api/v1/machines/{id}/bmc/{kind}` | power、sensors、events |
 | `/api/v1/audit`、`/tokens` | 操作记录、令牌管理 |
+| `/api/v1/settings/farm` | 矿场设定（电价，用于预估日电费）；`GET` 读取，`PUT` 保存 |
 | `/api/v1/openapi.json` | 运行时生成 OpenAPI 3.1 |
 
 准确参数以项目根目录 `openapi.json` 为准。生成命令 `cargo run -q -p rigdeck -- openapi > openapi.json`，随后 `npm --prefix frontend run types`。CI 校验重新生成后文件无变化。

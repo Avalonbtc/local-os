@@ -142,6 +142,12 @@ pub trait AuditRepository: Send + Sync {
     async fn audit(&self, actor: &Actor, action: &str, target: &str, detail: Value) -> Result<()>;
     async fn audit_events(&self, limit: i64) -> Result<Vec<AuditEvent>>;
 }
+#[async_trait]
+pub trait SettingsRepository: Send + Sync {
+    /// The stored farm settings, or `None` before anyone has saved them.
+    async fn farm_settings(&self) -> Result<Option<Value>>;
+    async fn save_farm_settings(&self, settings: &Value, actor: &Actor) -> Result<()>;
+}
 pub trait Repository:
     IdentityRepository
     + FleetRepository
@@ -150,6 +156,7 @@ pub trait Repository:
     + JobRepository
     + TelemetryRepository
     + AuditRepository
+    + SettingsRepository
 {
 }
 impl<T> Repository for T where
@@ -160,6 +167,7 @@ impl<T> Repository for T where
         + JobRepository
         + TelemetryRepository
         + AuditRepository
+        + SettingsRepository
 {
 }
 

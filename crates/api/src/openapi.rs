@@ -55,6 +55,7 @@ pub fn document() -> Value {
     schema::<SshProbeResult>(&mut schemas, "SshProbeResult");
     schema::<MachineBatchInput>(&mut schemas, "MachineBatchInput");
     schema::<MachineBatchResult>(&mut schemas, "MachineBatchResult");
+    schema::<FarmSettings>(&mut schemas, "FarmSettings");
     schemas.insert("JobAccepted".into(),json!({"type":"object","required":["job_id"],"properties":{"job_id":{"type":"string","format":"uuid"}}}));
     schemas.insert(
         "Object".into(),
@@ -101,6 +102,10 @@ pub fn document() -> Value {
         paths.entry(format!("/api/v1{path}")).or_insert(json!({}))["get"] =
             operation(None, output, array);
     }
+    paths.insert(
+        "/api/v1/settings/farm".into(),
+        json!({"get":operation(None,"FarmSettings",false),"put":operation(Some("FarmSettings"),"FarmSettings",false)}),
+    );
     paths.get_mut("/api/v1/jobs").unwrap()["post"] =
         operation(Some("JobInput"), "JobAccepted", false);
     paths.insert(

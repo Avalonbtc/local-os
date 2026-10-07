@@ -39,6 +39,7 @@ import {
   minerStatsFresh,
   useMachines,
   useRefresh,
+  useFarmSettings,
   useFleetTelemetry,
   type Machine,
   type Observation,
@@ -201,6 +202,7 @@ function coinOf(instance: Record<string, any>) {
 export function FleetSummary() {
   const machines = useMachines();
   const telemetry = useFleetTelemetry();
+  const price = useFarmSettings().data?.electricity_price;
   const rows = fleetRows(machines.data, telemetry.data);
   const online = rows.filter((row) => row.online).length;
   const threads = rows.reduce((sum, row) => sum + (row.logicalCpus ?? 0), 0);
@@ -229,7 +231,8 @@ export function FleetSummary() {
     }
   }
   const rateCards = [...rates.values()].sort((a, b) => b.rigs.size - a.rigs.size || b.hs - a.hs);
-  const dailyCost = powerReadings.length ? (totalWatts / 1000) * 24 * 0.56 : undefined;
+  const dailyCost =
+    powerReadings.length && price !== undefined ? (totalWatts / 1000) * 24 * price : undefined;
   return (
     <section className="hive-farm-summary" aria-label="矿场统计">
       <div className="hive-farm-summary-inner">
@@ -307,18 +310,19 @@ export function FleetSummary() {
             <IconServer size={13} />BMC 在线
           </span>
         </div>
-        <div
-          className="hive-stat"
-          title={`按当前软件功耗持续 24 小时 × 0.56 元/度估算，不含电源损耗；不是当天累计电费。`}
+        <Link
+          className="hive-stat hive-stat-link"
+          to="/settings?tab=farm"
+          title={`按当前软件功耗持续 24 小时 × ${price === undefined ? "电价" : `${number(price, 4)} 元/度`}估算，不含电源损耗；不是当天累计电费。点击修改电价`}
         >
           <div className="hive-stat-line">
             <strong>{dailyCost === undefined ? "—" : `¥${number(dailyCost, 2)}`}</strong>
             <small>/日</small>
           </div>
           <span>
-            <IconYuan size={13} />预估电费 <small>0.56 元/度</small>
+            <IconYuan size={13} />预估电费 <small>{price === undefined ? "—" : number(price, 4)} 元/度</small>
           </span>
-        </div>
+        </Link>
       </div>
     </section>
   );

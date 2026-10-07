@@ -26,6 +26,14 @@ async fn postgres_migrations_catalog_queue_leases_and_retention() {
         name,
         token_id: None,
     };
+    store
+        .save_farm_settings(&json!({"electricity_price":0.42}), &actor)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.farm_settings().await.unwrap(),
+        Some(json!({"electricity_price":0.42}))
+    );
     let symbol = format!("COIN-{}", Uuid::new_v4());
     let mut saves = Vec::new();
     for n in 0..4 {

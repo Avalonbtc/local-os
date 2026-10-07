@@ -6,6 +6,7 @@ pub mod flights;
 pub mod identity;
 pub mod jobs;
 pub mod mining;
+pub mod settings;
 pub mod telemetry;
 use rig_domain::*;
 use std::{collections::HashMap, sync::Arc};

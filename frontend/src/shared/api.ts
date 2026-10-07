@@ -17,6 +17,7 @@ export type TokenInfo = components["schemas"]["TokenInfo"];
 export type AuditEvent = components["schemas"]["AuditEvent"];
 export type MachineMessage = components["schemas"]["MachineMessage"];
 export type MinerLog = components["schemas"]["MinerLog"];
+export type FarmSettings = components["schemas"]["FarmSettings"];
 export type Data = Record<string, any>;
 
 let csrf = "";
@@ -114,6 +115,14 @@ export function useAdapters() {
   return useQuery({
     queryKey: ["adapters"],
     queryFn: () => unwrap(client.GET("/api/v1/adapters")),
+  });
+}
+/** Farm-wide preferences (electricity price), edited under 设定 → 矿场. */
+export function useFarmSettings() {
+  return useQuery({
+    queryKey: ["farm-settings"],
+    queryFn: ({ signal }) => unwrap(client.GET("/api/v1/settings/farm", { signal })),
+    staleTime: 5 * 60 * 1000,
   });
 }
 export function useRefresh() {

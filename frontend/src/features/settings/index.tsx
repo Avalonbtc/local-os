@@ -3,7 +3,9 @@ import {
   Alert,
   App,
   Button,
+  Form,
   Input,
+  InputNumber,
   Modal,
   Popconfirm,
   Space,
@@ -11,17 +13,63 @@ import {
   Tabs,
   Typography,
 } from "antd";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import {
   client,
   unwrap,
+  useFarmSettings,
   useRefresh,
+  type FarmSettings,
   type TokenInfo,
   type AuditEvent,
 } from "../../shared/api";
-import { PageHeader } from "../../shared/ui";
+import { PageHeader, QueryState } from "../../shared/ui";
+
+/** Farm preferences; the electricity price drives the summary bar's daily cost estimate. */
+function FarmSettingsForm() {
+  const { message } = App.useApp();
+  const queryClient = useQueryClient();
+  const settings = useFarmSettings();
+  const [busy, setBusy] = useState(false);
+  return (
+    <QueryState loading={settings.isLoading} error={settings.error}>
+      <Form<FarmSettings>
+        className="farm-settings"
+        layout="vertical"
+        initialValues={settings.data}
+        onFinish={async (values) => {
+          setBusy(true);
+          try {
+            const saved = await unwrap(client.PUT("/api/v1/settings/farm", { body: values }));
+            queryClient.setQueryData(["farm-settings"], saved);
+            message.success("已保存，矿机列表的预估电费已按新电价计算");
+          } catch (e) {
+            message.error((e as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <Form.Item
+          name="electricity_price"
+          label="电价"
+          extra="每千瓦时（度）的电费。矿机列表顶部的「预估电费」按当前软件功耗持续 24 小时乘以这个电价估算。"
+          rules={[{ required: true, message: "输入电价" }]}
+        >
+          <InputNumber min={0} max={100} step={0.01} precision={4} addonAfter="元/度" style={{ width: "100%" }} />
+        </Form.Item>
+        <Button type="primary" htmlType="submit" loading={busy}>
+          保存
+        </Button>
+      </Form>
+    </QueryState>
+  );
+}
+
 export function SettingsPage() {
   const { message } = App.useApp();
+  const [params, setParams] = useSearchParams();
   const refresh = useRefresh();
   const [name, setName] = useState("");
   const [token, setToken] = useState("");
@@ -35,9 +83,16 @@ export function SettingsPage() {
   });
   return (
     <>
-      <PageHeader title="设置" description="AI 接口、访问令牌与审计记录" />
+      <PageHeader title="设置" description="矿场、AI 接口、访问令牌与审计记录" />
       <Tabs
+        activeKey={params.get("tab") ?? "farm"}
+        onChange={(tab) => setParams({ tab }, { replace: true })}
         items={[
+          {
+            key: "farm",
+            label: "矿场",
+            children: <FarmSettingsForm />,
+          },
           {
             key: "tokens",
             label: "AI / API 令牌",

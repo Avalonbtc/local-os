@@ -529,6 +529,17 @@ details > summary {
 .hive-stat > span .rd-icon {
   color: var(--text-3);
 }
+.hive-stat-link {
+  color: inherit;
+  transition: border-color 0.15s;
+}
+.hive-stat-link:hover {
+  color: inherit;
+  border-color: rgba(245, 165, 36, 0.5);
+}
+.farm-settings {
+  max-width: 420px;
+}
 .hive-stat-coin {
   color: var(--text);
   font-weight: 650;

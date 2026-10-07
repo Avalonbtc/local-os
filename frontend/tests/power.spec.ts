@@ -4,6 +4,7 @@ test('software CPU power is used even when BMC has a different reading', async (
  await page.route('**/api/v1/**',async route=>{
  const path=new URL(route.request().url()).pathname;
  let body:any=[];
+ if(path.endsWith('/settings/farm')) body={electricity_price:0.56};
  if(path.endsWith('/me')) body={actor:{id,name:'fixture',token_id:null},csrf:'test',expires_at:'2099-01-01'};
  if(path.endsWith('/machines')) body=[{id,name:'CPU-test',host:'10.0.0.1',tags:[],policy:{},bmc:{provider:'ipmi',url:'10.0.0.2',username:'ADMIN'}}];
  if(path.includes('telemetry')) body=[{machine_id:id,kind:'system',observed_at:new Date().toISOString(),data:{cpu_power_w:307.4,gpus:[],logical_cpus:256},error:null},{machine_id:id,kind:'power',observed_at:new Date().toISOString(),data:{power_w:600,state:'On'},error:null}];
