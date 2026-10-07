@@ -37,9 +37,9 @@ class SnapshotTests(unittest.TestCase):
     def test_snapshot_contains_everything_the_controller_polls(self):
         self.rt.emit("warning", "watchdog_restart", "看门狗重启矿工", "xmr", reason="low_hashrate")
         (self.rt.ROOT / "instances/xmr").mkdir(parents=True)
-        self.rt.atomic_volatile(self.rt.ROOT / "instances/xmr/stats.json", {"instance": "xmr", "boot_id": self.rt.boot_id(), "sample_uptime": self.rt.uptime(), "process_alive": True, "stats": {"hashrate_hs": 5}})
+        self.rt.atomic_volatile(self.rt.stats_file("xmr"), {"instance": "xmr", "boot_id": self.rt.boot_id(), "sample_uptime": self.rt.uptime(), "process_alive": True, "stats": {"hashrate_hs": 5}})
         (self.rt.ROOT / "instances/old").mkdir(parents=True)
-        self.rt.atomic_volatile(self.rt.ROOT / "instances/old/stats.json", {"instance": "old", "boot_id": "previous-boot", "process_alive": True, "stats": {"hashrate_hs": 5}, "stats_observed_at": 1})
+        self.rt.atomic_volatile(self.rt.stats_file("old"), {"instance": "old", "boot_id": "previous-boot", "process_alive": True, "stats": {"hashrate_hs": 5}, "stats_observed_at": 1})
         snapshot = self.rt.publish_snapshot()
         on_disk = json.loads((self.rt.SNAPSHOT_DIR / "snapshot.json").read_text())
         self.assertEqual(on_disk["schema"], 1)

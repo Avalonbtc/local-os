@@ -43,6 +43,7 @@ class GpuOcTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="rigdeck-oc-")
         self.addCleanup(self.temp.cleanup)
         os.environ["RIG_RUNTIME_ROOT"] = str(Path(self.temp.name) / "state")
+        os.environ["RIG_SNAPSHOT_DIR"] = str(Path(self.temp.name) / "run")
         spec = importlib.util.spec_from_file_location("runtime", RUNTIME)
         self.rt = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.rt)
@@ -233,6 +234,64 @@ class GpuOcTests(unittest.TestCase):
             self.rt.oc_reapply()
         applied.assert_called_once_with({"amd": {"fan": [60]}})
 
+
+    def test_nvidia_readings_come_from_nvml_without_spawning_nvidia_smi(self):
+        rt = self.rt
+        values = {"nvmlDeviceGetTemperature": 61, "nvmlDeviceGetFanSpeed": 55, "nvmlDeviceGetPowerUsage": 181500,
+                  "nvmlDeviceGetPowerManagementLimit": 220000}
+
+        class Fake(rt.Nvml):
+            inits = 0
+
+            def __init__(self):
+                import ctypes
+                self.c = ctypes
+                Fake.inits += 1
+
+            def handle(self, address):
+                if address != "0000:01:00.0":
+                    raise rt.NvmlError("not found")
+                return address
+
+            def name(self, handle):
+                return "NVIDIA GeForce RTX 3070 Ti"
+
+            def check(self, name, *args):
+                target = args[-1]._obj
+                if name == "nvmlDeviceGetUtilizationRates":
+                    target.gpu = 99
+                elif name == "nvmlDeviceGetMemoryInfo":
+                    target.total = 8192 * 1048576
+                elif name == "nvmlDeviceGetClockInfo":
+                    target.value = {0: 1500, 2: 9751}[args[1].value]
+                elif name in values:
+                    target.value = values[name]
+                else:
+                    raise rt.NvmlError(name)
+
+        with patch.object(rt, "Nvml", Fake), patch.object(rt.subprocess, "run") as spawned:
+            readings = rt._nvidia_readings(["0000:01:00.0", "0000:02:00.0"])
+            rt._nvidia_readings(["0000:01:00.0"])  # same tick: cached
+            rt._NVIDIA_CACHE["at"] = -1e9
+            rt._nvidia_readings(["0000:01:00.0"])  # next tick: NVML stays open
+        spawned.assert_not_called()
+        self.assertEqual(Fake.inits, 1)
+        self.assertEqual(readings, {"0000:01:00.0": {
+            "model": "NVIDIA GeForce RTX 3070 Ti", "temperature_c": 61.0, "fan_pct": 55.0, "power_w": 181.5,
+            "util_pct": 99.0, "core_mhz": 1500.0, "mem_mhz": 9751.0, "vram_mb": 8192.0, "power_limit_w": 220.0}})
+
+    def test_nvidia_readings_fall_back_to_nvidia_smi_without_nvml(self):
+        rt = self.rt
+
+        def broken():
+            raise rt.NvmlError("no library")
+        output = "00000000:01:00.0, 60, NVIDIA GeForce RTX 3070 Ti, 50, 180.2, 98, 1500, 9751, 8192, 220.00\n"
+        with patch.object(rt, "Nvml", side_effect=broken), \
+                patch.object(rt.shutil, "which", return_value="/usr/bin/nvidia-smi"), \
+                patch.object(rt.subprocess, "run", return_value=type("r", (), {"stdout": output})()):
+            readings = rt._nvidia_readings(["0000:01:00.0"])
+        self.assertEqual(readings["0000:01:00.0"]["power_limit_w"], 220.0)
+        self.assertTrue(rt._NVML_READER["failed"])
 
 if __name__ == "__main__":
     unittest.main()

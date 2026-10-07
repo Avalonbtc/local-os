@@ -1,7 +1,6 @@
 import { Alert, Empty, Spin, Tag } from "antd";
 import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
-import * as echarts from "echarts";
 import { data, isFresh, type Observation } from "./api";
 
 export function PageHeader({
@@ -115,9 +114,15 @@ export function Chart({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!ref.current) return;
-    const chart = echarts.init(ref.current, "dark");
-    chart.setOption({
+    const element = ref.current;
+    if (!element) return;
+    let chart: import("echarts/core").ECharts | undefined;
+    let observer: ResizeObserver | undefined;
+    let disposed = false;
+    void import("./chart-engine").then(({ init }) => {
+      if (disposed) return;
+      chart = init(element, "dark");
+      chart.setOption({
       backgroundColor: "transparent",
       grid: { left: 55, right: 20, top: 35, bottom: 35 },
       tooltip: { trigger: "axis" },
@@ -143,11 +148,13 @@ export function Chart({
         },
       ],
     });
-    const observer = new ResizeObserver(() => chart.resize());
-    observer.observe(ref.current);
+      observer = new ResizeObserver(() => chart?.resize());
+      observer.observe(element);
+    });
     return () => {
-      observer.disconnect();
-      chart.dispose();
+      disposed = true;
+      observer?.disconnect();
+      chart?.dispose();
     };
   }, [points, label, unit]);
   return (

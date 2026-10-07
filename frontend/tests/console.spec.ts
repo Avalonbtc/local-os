@@ -28,14 +28,16 @@ test("login, custom coin from wallet, navigation, token revocation and responsiv
   await expect(dialog).not.toBeVisible();
   await page.getByRole("searchbox", { name: "搜索钱包" }).fill(wallet);
   await expect(page.getByText(wallet, { exact: true })).toBeVisible();
+  // The wallet cell shows the coin above the wallet name, as on HiveOS.
   await expect(
-    page.getByRole("cell", { name: coin, exact: true }),
+    page.getByRole("row").filter({ hasText: wallet }).getByText(coin, { exact: true }),
   ).toBeVisible();
   await page.screenshot({ path: "../screenshots/wallets.png", fullPage: true });
   // Coins, pools, miner software and the jobs page are gone: rigs download miners themselves
   // and job results live in each rig's messages.
   for (const [label, heading] of [
     ["飞行表", "添加新的飞行表"],
+    ["超频", "超频模板"],
     ["BMC 设备", "BMC"],
     ["BIOS", "BIOS 管理"],
     ["多机终端", "多机终端"],

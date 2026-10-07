@@ -48,6 +48,7 @@ class RuntimeTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="rigdeck-test-")
         os.environ["RIG_RUNTIME_ROOT"] = self.temp.name
+        os.environ["RIG_SNAPSHOT_DIR"] = os.path.join(self.temp.name, "run")
         spec = importlib.util.spec_from_file_location("runtime", RUNTIME)
         self.rt = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.rt)
