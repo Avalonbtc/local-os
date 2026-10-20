@@ -79,7 +79,7 @@ async fn postgres_migrations_catalog_queue_leases_and_retention() {
         Err(Error::Conflict(_))
     ));
     let mut hosts = Vec::new();
-    for index in 0..8 {
+    for index in 0..12 {
         let id = Uuid::new_v4();
         store
             .save_machine(
@@ -114,8 +114,6 @@ async fn postgres_migrations_catalog_queue_leases_and_retention() {
             timeout_seconds: 10,
         },
         idempotency_key: Uuid::new_v4().to_string(),
-        concurrency: 4,
-        canary: true,
         include_controller: false,
     };
     let snapshot = json!({"kind":"command","script":"printf test","timeout_seconds":10});
@@ -124,12 +122,18 @@ async fn postgres_migrations_catalog_queue_leases_and_retention() {
         store.enqueue(&request, &snapshot, &actor).await.unwrap(),
         job
     );
-    request.concurrency = 8;
+    request.action = Action::Command {
+        script: "printf changed".into(),
+        timeout_seconds: 10,
+    };
     assert!(matches!(
         store.enqueue(&request, &snapshot, &actor).await,
         Err(Error::Conflict(_))
     ));
-    request.concurrency = 4;
+    request.action = Action::Command {
+        script: "printf test".into(),
+        timeout_seconds: 10,
+    };
     // The rejected enqueue above rolls back when its pooled connection is recycled, which can
     // briefly keep the queue's advisory lock; claim() then yields None and the scheduler retries.
     let mut first = None;
@@ -142,7 +146,6 @@ async fn postgres_migrations_catalog_queue_leases_and_retention() {
     }
     let first = first.unwrap();
     assert_eq!(first.target.ordinal, 0);
-    assert!(store.claim().await.unwrap().is_none());
     assert!(!first.reconcile);
     let done = RemoteOperation {
         status: "succeeded".into(),
@@ -157,11 +160,26 @@ async fn postgres_migrations_catalog_queue_leases_and_retention() {
         .unwrap();
     let mut active = Vec::new();
     let mut all = HashSet::from([first.target.id]);
-    for _ in 0..4 {
-        let task = store.claim().await.unwrap().unwrap();
+    // All other machines can be claimed concurrently, even beyond the old 8-machine cap.
+    let mut parallel = Vec::new();
+    for _ in 1..hosts.len() {
+        let store = store.clone();
+        parallel.push(tokio::spawn(async move {
+            for _ in 0..100 {
+                if let Some(task) = store.claim().await.unwrap() {
+                    return task;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            panic!("selected machine was not dispatched");
+        }));
+    }
+    for future in parallel {
+        let task = future.await.unwrap();
         assert!(all.insert(task.target.id));
         active.push(task);
     }
+    assert_eq!(active.len(), 11);
     assert!(store.claim().await.unwrap().is_none());
     let expired = active.remove(0);
     sqlx::query("UPDATE job_targets SET lease_until=now()-interval '1 second' WHERE id=$1")
@@ -245,47 +263,7 @@ async fn postgres_migrations_catalog_queue_leases_and_retention() {
     for task in completions {
         task.await.unwrap();
     }
-    let mut parallel = Vec::new();
-    for _ in 0..8 {
-        let store = store.clone();
-        parallel.push(tokio::spawn(async move {
-            for _ in 0..10 {
-                if let Some(task) = store.claim().await.unwrap() {
-                    return Some(task);
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-            None
-        }));
-    }
-    let mut count = 0;
-    let mut final_tasks = Vec::new();
-    for future in parallel {
-        if let Some(task) = future.await.unwrap() {
-            assert!(all.insert(task.target.id));
-            count += 1;
-            final_tasks.push(task);
-        }
-    }
-    assert_eq!(count, 3);
-    let barrier = Arc::new(tokio::sync::Barrier::new(final_tasks.len()));
-    let mut completions = Vec::new();
-    for task in final_tasks {
-        let store = store.clone();
-        let done = done.clone();
-        let barrier = barrier.clone();
-        completions.push(tokio::spawn(async move {
-            barrier.wait().await;
-            store
-                .finish(task.target.id, task.lease, "succeeded", &done)
-                .await
-                .unwrap();
-        }));
-    }
-    for task in completions {
-        task.await.unwrap();
-    }
-    assert_eq!(all.len(), 8);
+    assert_eq!(all.len(), 12);
     assert_eq!(store.job(job).await.unwrap().status, "succeeded");
     let observed = Observation {
         machine_id: hosts[0],
@@ -377,7 +355,7 @@ async fn postgres_migrations_catalog_queue_leases_and_retention() {
         store.machine(hosts[0]).await,
         Err(Error::NotFound)
     ));
-    assert_eq!(store.job(job).await.unwrap().targets.len(), 8);
+    assert_eq!(store.job(job).await.unwrap().targets.len(), 12);
     assert!(
         !store
             .machines()

@@ -3089,9 +3089,6 @@ export interface components {
         Job: {
             action: unknown;
             actor: string;
-            canary: boolean;
-            /** Format: int32 */
-            concurrency: number;
             /** Format: date-time */
             created_at: string;
             /** Format: uuid */
@@ -3106,13 +3103,6 @@ export interface components {
         /** JobInput */
         JobInput: {
             action: components["schemas"]["Action"];
-            /** @default true */
-            canary: boolean;
-            /**
-             * Format: uint8
-             * @default 4
-             */
-            concurrency: number;
             idempotency_key: string;
             /** @default false */
             include_controller: boolean;

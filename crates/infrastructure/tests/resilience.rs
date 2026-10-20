@@ -116,8 +116,6 @@ async fn offline_hosts_and_transient_heartbeat_failure_do_not_interrupt_healthy_
             script: "fixture-only".into(),
             timeout_seconds: 60,
         },
-        concurrency: 1,
-        canary: false,
         include_controller: false,
         idempotency_key: Uuid::new_v4().to_string(),
     };

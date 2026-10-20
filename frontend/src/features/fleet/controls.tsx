@@ -11,7 +11,6 @@ import {
   Modal,
   Select,
   Space,
-  Switch,
   Upload,
 } from "antd";
 import { useNavigate } from "react-router-dom";
@@ -394,8 +393,6 @@ export function BatchModal({
         form={form}
         layout="vertical"
         initialValues={{
-          concurrency: kind === "power" ? Math.min(ids.length, 8) : 4,
-          canary: kind !== "power",
           timeout_seconds: 300,
           operation: kind === "power" ? "on" : "restart",
         }}
@@ -428,8 +425,6 @@ export function BatchModal({
               {
                 machine_ids: ids,
                 action,
-                concurrency: kind === "power" ? Math.min(ids.length, 8) : v.concurrency,
-                canary: kind === "power" ? false : v.canary,
                 include_controller: kind === "power"
                   ? selectedMachines.some((machine) => machine?.is_controller)
                   : false,
@@ -529,16 +524,7 @@ export function BatchModal({
             <Input placeholder="cpu-1,cpu-2" />
           </Form.Item>
         )}
-        {kind !== "power" && (
-          <div className="form-grid">
-            <Form.Item name="concurrency" label="并发机器数">
-              <InputNumber min={1} max={8} />
-            </Form.Item>
-            <Form.Item name="canary" valuePropName="checked" label="分批执行">
-              <Switch checkedChildren="先验证一台" unCheckedChildren="直接并行" />
-            </Form.Item>
-          </div>
-        )}
+
       </Form>
     </Modal>
   );

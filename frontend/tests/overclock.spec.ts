@@ -67,7 +67,7 @@ test("HiveOS conf import fills the form and reset submits a reset job", async ({
   expect(calls[0].action).toEqual({ kind: "gpu_oc_reset" });
 });
 
-test("templates page applies a template to selected machines with canary", async ({ page }) => {
+test("templates page applies a template to selected machines without dispatch limits", async ({ page }) => {
   const calls: any[] = [];
   await mockApi(page, calls, [{ id: "t1", kind: "oc_profile", name: "3070Ti-ETC", revision: 1, data: { nvidia: { clock: [1500], mem: [2400], plimit: [220] } } }]);
   await page.goto("/overclocking");
@@ -75,8 +75,10 @@ test("templates page applies a template to selected machines with canary", async
   await page.getByRole("button", { name: "应用到机器" }).click();
   await page.getByRole("combobox", { name: "目标机器" }).click();
   await page.getByTitle("rig-3070ti").click();
+  await page.getByRole("combobox", { name: "目标机器" }).press("Escape");
   await page.getByRole("dialog").getByRole("button", { name: /^应\s?用$/ }).click();
   await expect.poll(() => calls.length).toBe(1);
-  expect(calls[0].canary).toBe(true);
+  expect(calls[0]).not.toHaveProperty("canary");
+  expect(calls[0]).not.toHaveProperty("concurrency");
   expect(calls[0].action).toEqual({ kind: "gpu_oc", profile_name: "3070Ti-ETC", config: { nvidia: { clock: [1500], mem: [2400], plimit: [220] } } });
 });

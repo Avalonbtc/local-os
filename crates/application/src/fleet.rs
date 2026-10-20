@@ -113,8 +113,6 @@ impl App {
                         machine_ids: created,
                         action: Action::Bootstrap,
                         idempotency_key: Uuid::new_v4().to_string(),
-                        concurrency: 8,
-                        canary: true,
                         include_controller: false,
                     },
                 )

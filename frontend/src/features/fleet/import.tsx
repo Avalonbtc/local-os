@@ -402,7 +402,7 @@ export function BatchAddModal({ open, onClose }: { open: boolean; onClose: () =>
           <Input.Password autoComplete="new-password" />
         </Form.Item>
         <Form.Item name="bootstrap" valuePropName="checked">
-          <Checkbox>添加后自动部署运行层（先部署一台验证，再并发 8 台）</Checkbox>
+          <Checkbox>添加后同时向所选机器部署运行层</Checkbox>
         </Form.Item>
       </Form>
       {step > 0 && (

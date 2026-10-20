@@ -54,7 +54,7 @@ function BiosEditor({ id, name }: { id: string; name: string }) {
   async function submit(action: JobInput["action"]) {
     setBusy(true);
     try {
-      const result = await submitJob({ machine_ids: [id], action, concurrency: 1, canary: false, include_controller: true }, idem.current);
+      const result = await submitJob({ machine_ids: [id], action, include_controller: true }, idem.current);
       idem.current = crypto.randomUUID();
       setJobId(result.job_id); try { localStorage.setItem(`bios-job-${id}`, result.job_id); } catch { /* private mode */ }
       setConfirm(false); message.success("已提交，可在本页或机器消息中查看进度");

@@ -60,8 +60,6 @@ async fn flight_edit_enqueues_snapshot_atomically_and_rejects_stale_edits() {
         machine_ids: vec![machine],
         action: Action::Apply { sheet_id },
         idempotency_key: name.clone(),
-        concurrency: 1,
-        canary: false,
         include_controller: false,
     };
     let snapshot = json!({"kind":"apply","snapshot":{"hosts":{machine.to_string():{"sheet_id":sheet_id,"sheet_version":1}}}});

@@ -455,8 +455,6 @@ export function WorkerActions({
           await submitJob({
             machine_ids: [machine.id],
             action,
-            concurrency: 1,
-            canary: false,
             include_controller: machine.is_controller,
           });
           await queryClient.invalidateQueries({ queryKey: ["messages", machine.id] });

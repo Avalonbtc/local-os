@@ -44,14 +44,14 @@
 {
   "machine_ids": ["11111111-1111-4111-8111-111111111111"],
   "idempotency_key": "unique-operation-key",
-  "concurrency": 4,
-  "canary": true,
   "include_controller": false,
   "action": {"kind":"command","script":"uname -a","timeout_seconds":30}
 }
 ```
 
 返回 `{"job_id":"..."}`。job targets 含机器名、operation_id、status、output、output_truncated、result、error。命令退出码在远端 result 中，成功返回不代表挖矿成功。
+
+所选机器同时下发，不设置并发数量或首台验证；旧客户端传入的 `concurrency`、`canary` 字段会被忽略。REST 与 MCP 使用同一调度路径。同机已有管理操作时等待机器锁释放；显式包含主控的电源操作仍最后执行，避免下发途中主控断电。数据库保留历史并发字段用于旧记录和回滚，新调度不读取这些字段。
 
 动作类型为 bootstrap、command、apply、miner、power、adopt；miner.operation 为 start/stop/restart，power.operation 为 on/shutdown/reboot/force_off/force_restart。优雅动作不支持时不自动升级为强制动作。adopt 需要单机 PID、启动身份和明确的 start_script/stop_script/pid_script。
 

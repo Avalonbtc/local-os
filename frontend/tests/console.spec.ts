@@ -176,8 +176,6 @@ test("API CSRF, encrypted credentials omission, idempotency, shared MCP auth", a
       timeout_seconds: 5,
     },
     idempotency_key: crypto.randomUUID(),
-    concurrency: 1,
-    canary: true,
     include_controller: false,
   };
   const first = await request.post("/api/v1/jobs", { headers, data: command });
@@ -187,7 +185,7 @@ test("API CSRF, encrypted credentials omission, idempotency, shared MCP auth", a
   expect((await second.json()).job_id).toBe(job.job_id);
   const conflict = await request.post("/api/v1/jobs", {
     headers,
-    data: { ...command, concurrency: 2 },
+    data: { ...command, action: { ...command.action, script: 'printf changed' } },
   });
   expect(conflict.status()).toBe(409);
   expect(
@@ -246,8 +244,6 @@ test("real SSH PTY and machine detail tabs on an isolated lab node", async ({
         machine_ids: [machine.id],
         action: { kind: "miner", operation, instances: ["lab-cpu"] },
         idempotency_key: crypto.randomUUID(),
-        concurrency: 1,
-        canary: true,
         include_controller: false,
       },
     });

@@ -137,7 +137,7 @@ try:
     docker('exec', names[1], 'sh', '-c',
            "printf '#!/bin/sh\\nif [ \"$1\" = install ]; then /bin/mv /usr/bin/jq.fixture /usr/bin/jq; fi\\n' > /usr/local/bin/apt-get && chmod 755 /usr/local/bin/apt-get")
     job = api('POST', '/jobs', {'machine_ids': [elevated_machine['id']], 'action': {'kind': 'bootstrap'},
-        'idempotency_key': 'sudo-bootstrap-fixture-v1', 'concurrency': 1, 'canary': True})
+        'idempotency_key': 'sudo-bootstrap-fixture-v1'})
     for _ in range(60):
         target = api('GET', '/jobs/' + job['job_id'])['targets'][0]
         if target['status'] in ('succeeded', 'failed', 'unknown'):

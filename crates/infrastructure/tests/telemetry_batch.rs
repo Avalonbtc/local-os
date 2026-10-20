@@ -79,8 +79,6 @@ async fn batched_observations_events_messages_and_deltas() {
                 machine_ids: vec![machine],
                 action: Action::Bootstrap,
                 idempotency_key: Uuid::new_v4().to_string(),
-                concurrency: 1,
-                canary: false,
                 include_controller: false,
             },
             &json!({"kind":"bootstrap"}),

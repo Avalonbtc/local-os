@@ -330,26 +330,14 @@ pub struct JobInput {
     pub machine_ids: Vec<Uuid>,
     pub action: Action,
     pub idempotency_key: String,
-    #[serde(default = "job_concurrency")]
-    pub concurrency: u8,
-    #[serde(default = "yes")]
-    pub canary: bool,
     #[serde(default)]
     pub include_controller: bool,
-}
-fn job_concurrency() -> u8 {
-    4
-}
-fn yes() -> bool {
-    true
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Job {
     pub id: Uuid,
     pub action: Value,
     pub status: String,
-    pub concurrency: i32,
-    pub canary: bool,
     pub created_at: DateTime<Utc>,
     pub actor: String,
     pub targets: Vec<JobTarget>,

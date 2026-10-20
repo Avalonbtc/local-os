@@ -515,14 +515,12 @@ export function FlightsPage() {
             await submitJob({
               action: { kind: "apply", sheet_id: apply!.id },
               machine_ids: targets,
-              concurrency: 4,
-              canary: true,
               include_controller: false,
             });
             setApply(undefined);
             message.success(targets.length === 1
               ? "已下发，结果见矿机的「消息」"
-              : `已下发到 ${targets.length} 台矿机（先在 1 台上验证），结果见各矿机的「消息」`);
+              : `已下发到 ${targets.length} 台矿机，结果见各矿机的「消息」`);
           } catch (e) {
             message.error((e as Error).message);
           } finally {
@@ -530,7 +528,7 @@ export function FlightsPage() {
           }
         }}
       >
-        <p className="muted">先验证一台，再以 4 台并发继续。主控默认排除。</p>
+        <p className="muted">同时下发到所选矿机，结果见各矿机的「消息」。</p>
         <Select
           mode="multiple"
           placeholder="选择目标机器"

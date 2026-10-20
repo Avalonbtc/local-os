@@ -54,8 +54,8 @@ for n in range(1,9):
     output=api("POST",f"/machines/{host['id']}/test")
     assert output["exit_code"]==0,output
 
-def job(action,concurrency=8,canary=False):
-    payload={"action":action,"machine_ids":hosts,"idempotency_key":str(uuid.uuid4()),"concurrency":concurrency,"canary":canary,"include_controller":False}
+def job(action):
+    payload={"action":action,"machine_ids":hosts,"idempotency_key":str(uuid.uuid4()),"include_controller":False}
     first=api("POST","/jobs",payload)
     assert api("POST","/jobs",payload)==first,"idempotency failed"
     deadline=time.monotonic()+180
@@ -97,7 +97,7 @@ suffix=str(uuid.uuid4())[:8]
 wallet=api("POST","/catalog/wallets",{"name":f"LAB wallet {suffix}","data":{"coin_symbol":f"LAB-{suffix}","address":"local-test-no-funds"}})
 miner={"adapter":"xmrig","name":"LAB synthetic miner","version":"test-1","executable":"lab-miner.py","url":f"http://{gateway}:{server.server_address[1]}/lab-miner.tar.gz","sha256":hashlib.sha256(package).hexdigest()}
 sheet=api("POST","/flight-sheets",{"name":f"LAB flight {suffix}","tasks":[{"instance":"lab-cpu","wallet_id":wallet["id"],"miner":miner,"config":{"urls":["stratum+tcp://127.0.0.1:1"],"algorithm":"rx/0","warmup_seconds":1,"verification_seconds":15}}]})
-deployment=job({"kind":"apply","sheet_id":sheet["id"]},concurrency=4,canary=True)
+deployment=job({"kind":"apply","sheet_id":sheet["id"]})
 stopped=job({"kind":"miner","operation":"stop","instances":["lab-cpu"]})
 report={"nodes":8,"ssh_connection_tests":8,"batch_command_job":commands["id"],"flight_sheet_job":deployment["id"],"stop_job":stopped["id"],"stats_are_synthetic":True,"real_mining_verified":False,"completed_at":time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())}
 (work/"lab-report.json").write_text(json.dumps(report,indent=2))

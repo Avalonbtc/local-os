@@ -482,8 +482,6 @@ export function MachineDetail() {
                   pid: adopting!.pid,
                   start_identity: String(adopting!.start_identity),
                 },
-                concurrency: 1,
-                canary: true,
                 include_controller: false,
               });
               setAdopting(undefined);

@@ -26,13 +26,10 @@ fn reconcile_delay(attempts: i32) -> i64 {
 impl App {
     pub async fn submit_job(&self, actor: &Actor, mut input: JobInput) -> Result<Uuid> {
         if input.machine_ids.is_empty()
-            || input.machine_ids.len() > 128
-            || input.concurrency == 0
-            || input.concurrency > 8
             || input.idempotency_key.is_empty()
             || input.idempotency_key.len() > 128
         {
-            return Err(Error::Validation("需选择机器、1–8 并发和有效幂等键".into()));
+            return Err(Error::Validation("需选择机器并提供有效幂等键".into()));
         }
         let mut seen = HashSet::new();
         input.machine_ids.retain(|id| seen.insert(*id));
@@ -145,29 +142,27 @@ impl App {
     }
 
     pub async fn run_worker(self) {
-        let limit = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
+        // Dispatch every eligible machine without waiting for other machines to finish.
+        // The repository still serializes conflicting operations on the same machine.
+        let mut sweep_at = tokio::time::Instant::now();
         loop {
-            if let Err(error) = self.repository.expire_leases().await {
-                tracing::warn!(%error,"queue unavailable");
+            if tokio::time::Instant::now() >= sweep_at {
+                if let Err(error) = self.repository.expire_leases().await {
+                    tracing::warn!(%error,"queue unavailable");
+                }
+                sweep_at = tokio::time::Instant::now() + Duration::from_secs(10);
             }
-            let permit = match limit.clone().acquire_owned().await {
-                Ok(p) => p,
-                Err(_) => return,
-            };
             match self.repository.claim().await {
                 Ok(Some(task)) => {
                     let app = self.clone();
                     tokio::spawn(async move {
-                        let _permit = permit;
                         app.execute_task(task).await;
                     });
                 }
                 Ok(None) => {
-                    drop(permit);
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }
                 Err(error) => {
-                    drop(permit);
                     tracing::warn!(%error,"claim failed");
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }

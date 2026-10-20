@@ -3,9 +3,9 @@ use serde_json::json;
 use sqlx::Row;
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
-const JOB: &str = "SELECT jsonb_build_object('id',j.id,'action',j.action,'status',j.status,'concurrency',j.concurrency,'canary',j.canary,'created_at',j.created_at,'actor',j.actor,'targets',COALESCE((SELECT jsonb_agg(to_jsonb(t)-'lease'-'lease_until'-'started_at'-'finished_at' ORDER BY ordinal) FROM job_targets t WHERE t.job_id=j.id),'[]'::jsonb)) FROM jobs j";
+const JOB: &str = "SELECT jsonb_build_object('id',j.id,'action',j.action,'status',j.status,'created_at',j.created_at,'actor',j.actor,'targets',COALESCE((SELECT jsonb_agg(to_jsonb(t)-'lease'-'lease_until'-'started_at'-'finished_at' ORDER BY ordinal) FROM job_targets t WHERE t.job_id=j.id),'[]'::jsonb)) FROM jobs j";
 
-const JOB_LIST: &str = "SELECT jsonb_build_object('id',j.id,'action',j.action-'snapshot','status',j.status,'concurrency',j.concurrency,'canary',j.canary,'created_at',j.created_at,'actor',j.actor,'targets',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',t.id,'job_id',t.job_id,'machine_id',t.machine_id,'machine_name',t.machine_name,'status',t.status,'ordinal',t.ordinal,'operation_id',t.operation_id,'output','','output_truncated',t.output_truncated,'result',NULL,'error',t.error) ORDER BY t.ordinal) FROM job_targets t WHERE t.job_id=j.id),'[]'::jsonb)) FROM jobs j ORDER BY j.created_at DESC LIMIT $1";
+const JOB_LIST: &str = "SELECT jsonb_build_object('id',j.id,'action',j.action-'snapshot','status',j.status,'created_at',j.created_at,'actor',j.actor,'targets',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',t.id,'job_id',t.job_id,'machine_id',t.machine_id,'machine_name',t.machine_name,'status',t.status,'ordinal',t.ordinal,'operation_id',t.operation_id,'output','','output_truncated',t.output_truncated,'result',NULL,'error',t.error) ORDER BY t.ordinal) FROM job_targets t WHERE t.job_id=j.id),'[]'::jsonb)) FROM jobs j ORDER BY j.created_at DESC LIMIT $1";
 
 #[async_trait::async_trait]
 impl JobRepository for PgStore {
@@ -66,7 +66,7 @@ impl JobRepository for PgStore {
         if !locked {
             return Ok(None);
         }
-        let row=sqlx::query("SELECT to_jsonb(t)-'lease'-'lease_until'-'started_at'-'finished_at' target,j.action,t.status,t.attempts FROM job_targets t JOIN jobs j ON j.id=t.job_id JOIN machines m ON m.id=t.machine_id WHERE m.deleted_at IS NULL AND ((t.status='reconciling' AND (t.retry_at IS NULL OR t.retry_at<=now())) OR (t.status='queued' AND NOT j.cancel_requested AND NOT EXISTS(SELECT 1 FROM machine_locks l WHERE l.machine_id=t.machine_id) AND (NOT j.canary OR t.ordinal=0 OR EXISTS(SELECT 1 FROM job_targets c WHERE c.job_id=t.job_id AND c.ordinal=0 AND c.status='succeeded')) AND (SELECT count(*) FROM job_targets c WHERE c.job_id=t.job_id AND c.status IN ('running','reconciling')) < j.concurrency AND (NOT m.is_controller OR j.action->>'kind'<>'power' OR NOT EXISTS(SELECT 1 FROM job_targets c WHERE c.job_id=t.job_id AND c.id<>t.id AND c.status NOT IN ('succeeded','failed','cancelled','blocked'))))) ORDER BY CASE WHEN t.status='reconciling' THEN 0 ELSE 1 END,j.created_at,t.ordinal FOR UPDATE OF t SKIP LOCKED LIMIT 1").fetch_optional(&mut *tx).await.map_err(db)?;
+        let row=sqlx::query("SELECT to_jsonb(t)-'lease'-'lease_until'-'started_at'-'finished_at' target,j.action,t.status,t.attempts FROM job_targets t JOIN jobs j ON j.id=t.job_id JOIN machines m ON m.id=t.machine_id WHERE m.deleted_at IS NULL AND ((t.status='reconciling' AND (t.retry_at IS NULL OR t.retry_at<=now())) OR (t.status='queued' AND NOT j.cancel_requested AND NOT EXISTS(SELECT 1 FROM machine_locks l WHERE l.machine_id=t.machine_id) AND (NOT m.is_controller OR j.action->>'kind'<>'power' OR NOT EXISTS(SELECT 1 FROM job_targets c WHERE c.job_id=t.job_id AND c.id<>t.id AND c.status NOT IN ('succeeded','failed','cancelled','blocked'))))) ORDER BY CASE WHEN t.status='reconciling' THEN 0 ELSE 1 END,j.created_at,t.ordinal FOR UPDATE OF t SKIP LOCKED LIMIT 1").fetch_optional(&mut *tx).await.map_err(db)?;
         let Some(row) = row else { return Ok(None) };
         let target: JobTarget = decode(row.get("target"))?;
         let reconcile = row.get::<String, _>("status") == "reconciling";
@@ -119,7 +119,6 @@ impl JobRepository for PgStore {
                     .await
                     .map_err(db)?;
             }
-            sqlx::query("UPDATE job_targets SET status='blocked',error='首台验证未成功，后续机器未执行',finished_at=now() WHERE job_id=$1 AND status='queued' AND EXISTS(SELECT 1 FROM jobs j JOIN job_targets t ON t.job_id=j.id WHERE j.id=$1 AND j.canary AND t.ordinal=0 AND t.status IN ('failed','unknown','cancelled'))").bind(job).execute(&mut *tx).await.map_err(db)?;
             update_job(&mut tx, job).await?;
             sqlx::query("INSERT INTO audit_events(actor,action,target,detail) VALUES('worker','jobs.result',$1,$2)").bind(target.to_string()).bind(json!({"status":status,"result":r.result,"error":r.error})).execute(&mut *tx).await.map_err(db)?;
         }
@@ -211,8 +210,9 @@ pub(super) async fn enqueue_tx(
         &serde_json::to_string(input).map_err(|e| Error::Internal(e.to_string()))?,
     );
     let id = Uuid::new_v4();
-    let row=sqlx::query("INSERT INTO jobs(id,actor_id,actor,action,request_hash,idempotency_key,concurrency,canary) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(actor_id,idempotency_key) DO UPDATE SET idempotency_key=jobs.idempotency_key RETURNING id,request_hash")
-            .bind(id).bind(actor.id).bind(&actor.name).bind(snapshot).bind(&hash).bind(&input.idempotency_key).bind(input.concurrency as i32).bind(input.canary).fetch_one(&mut **tx).await.map_err(db)?;
+    // Keep historical columns for rollback compatibility; they no longer control dispatch.
+    let row=sqlx::query("INSERT INTO jobs(id,actor_id,actor,action,request_hash,idempotency_key,concurrency,canary) VALUES($1,$2,$3,$4,$5,$6,1,false) ON CONFLICT(actor_id,idempotency_key) DO UPDATE SET idempotency_key=jobs.idempotency_key RETURNING id,request_hash")
+            .bind(id).bind(actor.id).bind(&actor.name).bind(snapshot).bind(&hash).bind(&input.idempotency_key).fetch_one(&mut **tx).await.map_err(db)?;
     let actual: Uuid = row.get("id");
     if row.get::<String, _>("request_hash") != hash {
         return Err(Error::Conflict("同一幂等键不能用于不同请求".into()));

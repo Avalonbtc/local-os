@@ -60,8 +60,6 @@ impl App {
                     machine_ids,
                     action: Action::Apply { sheet_id: id },
                     idempotency_key: format!("flight-edit-{id}-{}", previous.version + 1),
-                    concurrency: 4,
-                    canary: true,
                     include_controller: false,
                 },
                 snapshot: json!({"kind":"apply", "sheet_id":id, "snapshot":snapshot}),

@@ -9,7 +9,6 @@ import {
   Empty,
   Form,
   Input,
-  InputNumber,
   Modal,
   Popconfirm,
   Select,
@@ -251,7 +250,7 @@ export function WorkerOverclock({ machine }: { machine: Machine }) {
   async function run(action: Parameters<typeof submitJob>[0]["action"], done: string) {
     setBusy(true);
     try {
-      await submitJob({ machine_ids: [machine.id], action, concurrency: 1, canary: false, include_controller: true });
+      await submitJob({ machine_ids: [machine.id], action, include_controller: true });
       message.success(done);
     } catch (error) {
       message.error((error as Error).message);
@@ -386,7 +385,6 @@ function ApplyTemplate({ item, onClose }: { item: CatalogItem; onClose: () => vo
   const { message } = App.useApp();
   const machines = useMachines();
   const [targets, setTargets] = useState<string[]>([]);
-  const [concurrency, setConcurrency] = useState(4);
   return (
     <Modal
       title={`应用模板：${item.name}`}
@@ -399,11 +397,9 @@ function ApplyTemplate({ item, onClose }: { item: CatalogItem; onClose: () => vo
           await submitJob({
             machine_ids: targets,
             action: { kind: "gpu_oc", profile_name: item.name, config: item.data as OcConfig },
-            concurrency,
-            canary: true,
             include_controller: true,
           });
-          message.success("已提交；先在第一台验证，成功后再并发执行");
+          message.success("已同时下发到所选机器，结果见各矿机的「消息」");
           onClose();
         } catch (error) {
           message.error((error as Error).message);
@@ -422,10 +418,6 @@ function ApplyTemplate({ item, onClose }: { item: CatalogItem; onClose: () => vo
           onChange={setTargets}
           options={(machines.data ?? []).map((m) => ({ value: m.id, label: m.name }))}
         />
-        <Space>
-          并发
-          <InputNumber aria-label="并发" min={1} max={8} value={concurrency} onChange={(v) => setConcurrency(v ?? 4)} />
-        </Space>
       </Space>
     </Modal>
   );

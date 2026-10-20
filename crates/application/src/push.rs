@@ -260,7 +260,9 @@ impl App {
             session.push_digest = next_base["push_digest"].as_str().map(str::to_owned);
             session.base = Some((message.seq, next_base));
             // A delayed but still parseable snapshot is not evidence of fresh telemetry.
-            let age = (Utc::now() - parsed.observed_at).to_std().unwrap_or_default();
+            let age = (Utc::now() - parsed.observed_at)
+                .to_std()
+                .unwrap_or_default();
             session.last_push = Instant::now().checked_sub(age);
             sessions.insert(id, session);
         }

@@ -30,6 +30,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: cargo test -p rig-infrastructure --test postgres -- --ignored
+      - run: cargo test -p rig-infrastructure --test job_dispatch -- --ignored
       - run: cargo test -p rig-infrastructure --test telemetry_push -- --ignored
       - run: python3 tests/redfish/run.py
       - run: python3 tests/check_boundaries.py

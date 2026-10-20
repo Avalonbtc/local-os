@@ -813,13 +813,6 @@
           "actor": {
             "type": "string"
           },
-          "canary": {
-            "type": "boolean"
-          },
-          "concurrency": {
-            "format": "int32",
-            "type": "integer"
-          },
           "created_at": {
             "format": "date-time",
             "type": "string"
@@ -842,8 +835,6 @@
           "id",
           "action",
           "status",
-          "concurrency",
-          "canary",
           "created_at",
           "actor",
           "targets"
@@ -867,17 +858,6 @@
         "properties": {
           "action": {
             "$ref": "#/components/schemas/Action"
-          },
-          "canary": {
-            "default": true,
-            "type": "boolean"
-          },
-          "concurrency": {
-            "default": 4,
-            "format": "uint8",
-            "maximum": 255,
-            "minimum": 0,
-            "type": "integer"
           },
           "idempotency_key": {
             "type": "string"
