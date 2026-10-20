@@ -96,7 +96,21 @@ impl App {
         let credential = self.credential(machine.id, false).await?;
         if kind == "bootstrap" {
             // Bootstrap is a versioned, atomic, idempotent installation and does not start miners.
-            let result = self.runtime.bootstrap(&machine, &credential).await?;
+            let mut result = self.runtime.bootstrap(&machine, &credential).await?;
+            // Best effort: the monitor retries over SSH until the rig reports this target.
+            if let Some(target) = self.push_target(machine.id) {
+                let push = match self
+                    .runtime
+                    .configure_push(&machine, &credential, &target)
+                    .await
+                {
+                    Ok(()) => json!("configured"),
+                    Err(error) => json!(format!("主动上报未配置：{error}")),
+                };
+                if let Some(object) = result.as_object_mut() {
+                    object.insert("push".into(), push);
+                }
+            }
             return self
                 .finish_with_retry(
                     task.target.id,

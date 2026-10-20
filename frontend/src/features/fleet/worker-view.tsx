@@ -543,7 +543,10 @@ export function SystemTiles({ system }: { system?: Observation }) {
       <div className="wk-sys-tile">
         <IconLayers size={26} className="wk-sys-icon" />
         <b>{d.runtime_version ?? "—"}</b>
-        <em>运行层版本</em>
+        <em>
+          运行层版本
+          {d.transport === "push" ? " · 主动上报" : d.transport === "ssh" ? " · SSH 读取" : ""}
+        </em>
       </div>
       {drivers.length > 0 && (
         <div className="wk-sys-tile">

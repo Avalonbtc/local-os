@@ -124,6 +124,10 @@ RIGDECK_MASTER_KEY_FILE=/etc/rigdeck/master.key
 RIGDECK_DATA_DIR=/var/lib/rigdeck-controller
 RIGDECK_STATIC_DIR=$repo/frontend/dist
 RIGDECK_SUM_PATH=$repo/tools/sum/sum
+# 矿机看门狗主动上报统计的端口（HTTP，每个请求用该机器的密钥签名）；off 则改回主控 SSH 读取
+RIGDECK_INGEST_BIND=0.0.0.0:8091
+# 矿机访问主控的上报地址；留空时按每台矿机看到的 SSH 来源地址自动生成
+#RIGDECK_INGEST_URL=http://192.168.1.10:8091/ingest/v1/push
 RUST_LOG=info,sqlx=warn
 $extra
 ENV
@@ -177,6 +181,7 @@ cat <<DONE
   改完代码后：  bash scripts/native/restart.sh     （先编译，成功后才重启）
   查看日志：    journalctl -u rigdeck -f
   配置文件：    /etc/rigdeck/rigdeck.env   主密钥：/etc/rigdeck/master.key（请另外备份）
+  统计上报：    矿机主动推送到主控 TCP 8091（RIGDECK_INGEST_BIND）；有防火墙时请对矿机网段放行
 DONE
 if [[ "$mode" == https ]]; then
   echo "  HTTPS 根证书：/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt（导入到访问设备）"

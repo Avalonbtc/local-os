@@ -49,6 +49,7 @@ sudo bash scripts/verify-backup.sh backups/本次目录/database.dump
 | PG 不可用 | `systemctl status postgresql`；修复 PG 和磁盘，主控暂不接受新写操作；本地 watchdog 不受影响 |
 | 重启后服务起不来 | `journalctl -u rigdeck -n 200` 查看编译或启动错误；修好代码后 `bash scripts/native/restart.sh` |
 | 统计过期 | 区分主控采集失败、矿工 API 失败和真实算力为零；面板不补假数据 |
+| 单机页一直显示“SSH 读取” | 运行层低于 0.4.0 时先“部署运行层”；否则从矿机执行 `curl -s -o /dev/null -w '%{http_code}' -X POST http://主控:8091/ingest/v1/push`，应返回 401（端口通，签名不对）。不通就检查防火墙、`RIGDECK_INGEST_BIND`，主控有多个地址或经过 NAT 时设置 `RIGDECK_INGEST_URL`。矿机端 `journalctl -u rigdeck-watchdog` 里有 `push rejected/failed` 的原因 |
 
 任务输出每目标最多 1 MiB，达到上限标记截断。目标机 screen/custom `*.log` 超过 32 MiB 时保留约 8 MiB 尾部并加截断标记；软件包、配置版本及远端操作记录不自动删除，避免破坏回退与对账。需要定期关注这些目录空间，清理前确认不被运行版本和未完成操作引用。
 

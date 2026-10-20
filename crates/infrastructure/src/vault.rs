@@ -4,11 +4,21 @@ use argon2::{
     password_hash::{PasswordHash, SaltString},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
+use hmac::{Hmac, Mac};
 use rand::{RngCore, rngs::OsRng};
 use rig_domain::*;
+use sha2::Sha256;
 
 pub struct Vault {
     cipher: Aes256Gcm,
+    /// Root for per-machine push keys: HMAC(master, label), so the master key itself never
+    /// signs telemetry and nothing needs storing.
+    push_root: [u8; 32],
+}
+fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key).expect("HMAC accepts any key length");
+    mac.update(data);
+    mac.finalize().into_bytes().into()
 }
 impl Vault {
     pub fn new(key: &str) -> Result<Self> {
@@ -17,7 +27,10 @@ impl Vault {
             .map_err(|_| Error::Validation("主密钥需为 32 字节的 Base64".into()))?;
         let cipher = Aes256Gcm::new_from_slice(&bytes)
             .map_err(|_| Error::Validation("主密钥长度必须为 32 字节".into()))?;
-        Ok(Self { cipher })
+        Ok(Self {
+            cipher,
+            push_root: hmac_sha256(&bytes, b"rigdeck/telemetry-push/v1"),
+        })
     }
 }
 impl SecretVault for Vault {
@@ -65,6 +78,12 @@ impl SecretVault for Vault {
         OsRng.fill_bytes(&mut bytes);
         hex::encode(bytes)
     }
+    fn push_key(&self, machine: uuid::Uuid) -> Option<String> {
+        Some(hex::encode(hmac_sha256(
+            &self.push_root,
+            machine.to_string().as_bytes(),
+        )))
+    }
 }
 
 #[cfg(test)]
@@ -84,5 +103,16 @@ mod tests {
         );
         let wrong = Vault::new(&STANDARD.encode([8u8; 32])).unwrap();
         assert!(wrong.decrypt(&encrypted).is_err());
+    }
+    #[test]
+    fn push_keys_are_stable_per_machine_and_master_key() {
+        let vault = Vault::new(&STANDARD.encode([7u8; 32])).unwrap();
+        let (a, b) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+        let key = vault.push_key(a).unwrap();
+        assert_eq!(key.len(), 64);
+        assert_eq!(Some(key.clone()), vault.push_key(a));
+        assert_ne!(Some(key.clone()), vault.push_key(b));
+        let other = Vault::new(&STANDARD.encode([8u8; 32])).unwrap();
+        assert_ne!(Some(key), other.push_key(a));
     }
 }

@@ -10,9 +10,11 @@ import csv
 import contextlib
 import fcntl
 import hashlib
+import hmac
 import json
 import os
 import pwd
+import queue
 from pathlib import Path
 import re
 import shutil
@@ -24,10 +26,13 @@ import sys
 import tarfile
 import tempfile
 import time
+import threading
+import urllib.error
 import urllib.request
 import uuid
+import zlib
 
-VERSION = "0.3.4"
+VERSION = "0.4.0"
 ROOT = Path(os.environ.get("RIG_RUNTIME_ROOT", "/var/lib/rigdeck"))
 # Controller reads this with a plain `cat` (no Python start-up, no sudo). /run is tmpfs.
 SNAPSHOT_DIR = Path(os.environ.get("RIG_SNAPSHOT_DIR", "/run/rigdeck"))
@@ -35,6 +40,8 @@ SNAPSHOT_DIR = Path(os.environ.get("RIG_SNAPSHOT_DIR", "/run/rigdeck"))
 # meaningful within one boot anyway, and every reader already checks the boot id.
 VOLATILE = SNAPSHOT_DIR / "cache"
 EVENTS = ROOT / "events.jsonl"
+# Where the watchdog pushes its snapshot ({url, machine_id, key, digest}); written by `set-push`.
+PUSH_FILE = ROOT / "push.json"
 SELF = str(Path(__file__).resolve())
 MAX_OUTPUT = 1024 * 1024
 NAME = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
@@ -1485,14 +1492,210 @@ def publish_snapshot():
         if item:
             instances.append(item)
     policy = read(ROOT / "policy.json")
+    # push_digest is always present (null when unset) so the controller knows this runtime can push.
     snapshot = {"schema": 1, "runtime_version": VERSION, "boot_id": boot, "uptime": now_uptime, "written_at": time.time(),
                 "system": collect_system(), "mining": {"instances": instances}, "events": recent_events(),
-                "policy_digest": policy.get("digest")}
+                "policy_digest": policy.get("digest"), "push_digest": read(PUSH_FILE).get("digest")}
     SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(SNAPSHOT_DIR, 0o755)
     owner = snapshot_reader()
     atomic_volatile(SNAPSHOT_DIR / "snapshot.json", snapshot, mode=0o400 if owner is not None else 0o600, owner=owner)
     return snapshot
+
+
+def snapshot_diff(old, new):
+    """Smallest patch turning `old` into `new`; the controller applies it to the same base.
+
+    Objects are patched key by key ("$del" lists removed keys), equal-length lists index by index
+    ("$items"); anything else is replaced whole. Unchanged values are left out entirely.
+    """
+    if isinstance(old, dict) and isinstance(new, dict):
+        patch = {key: snapshot_diff(old[key], value) if key in old else value
+                 for key, value in new.items() if key not in old or old[key] != value}
+        removed = [key for key in old if key not in new]
+        if removed:
+            patch["$del"] = removed
+        return patch
+    if isinstance(old, list) and isinstance(new, list) and len(old) == len(new):
+        return {"$items": {str(i): snapshot_diff(a, b) for i, (a, b) in enumerate(zip(old, new)) if a != b}}
+    return new
+
+
+class Pusher:
+    """Push every watchdog snapshot to the controller instead of waiting for an SSH poll.
+
+    Bodies are zlib-compressed and HMAC-SHA256 signed with this machine's key. After the controller
+    has acknowledged one full snapshot only a patch against it is sent, plus a full keyframe every
+    KEYFRAME pushes. Events go once (the controller acknowledges what it stored), software every
+    minute and hardware inventory hourly. Nothing is buffered: a missed tick is superseded by the
+    next one, and the SSH fallback on the controller covers an unreachable endpoint.
+    """
+    KEYFRAME = 30
+    TIMEOUT = 4
+
+    def __init__(self):
+        self.target = None
+        self.epoch = None
+        self.seq = 0
+        self.events_seq = 0
+        self.software_at = self.hardware_at = -1e9
+        self.retry_at = 0
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        self.forget_base()
+
+    def forget_base(self):
+        self.base = self.base_seq = None
+        self.since_full = 0
+
+    def message(self, snapshot, config, extras):
+        body = {key: value for key, value in snapshot.items() if key != "events"}
+        self.seq = max(self.seq + 1, int(uptime() * 1000))
+        full = self.base is None or self.since_full >= self.KEYFRAME
+        message = {"v": 1, "machine": config["machine_id"], "epoch": self.epoch, "seq": self.seq,
+                   "boot_id": snapshot["boot_id"], **extras}
+        if full:
+            message["snapshot"] = body
+        else:
+            message.update(base=self.base_seq, patch=snapshot_diff(self.base, body))
+        events = [e for e in snapshot.get("events") or [] if isinstance(e.get("seq"), int) and e["seq"] > self.events_seq]
+        if events:
+            message["events"] = events
+        message["sent_uptime"] = uptime()
+        return message, body, full
+
+    def send(self, config, message):
+        data = zlib.compress(json.dumps(message, separators=(",", ":")).encode(), 6)
+        signature = hmac.new(bytes.fromhex(config["key"]), data, hashlib.sha256).hexdigest()
+        request = urllib.request.Request(config["url"], data=data, method="POST", headers={
+            "Content-Type": "application/json", "Content-Encoding": "deflate",
+            "X-Rig-Machine": config["machine_id"], "X-Rig-Signature": signature})
+        def read_reply(response):
+            raw = response.read(65537)
+            if len(raw) > 65536:
+                raise ValueError("Push reply too large")
+            status = response.code
+            if status in (200, 409):
+                prefix = f"rigdeck-push-reply-v1\n{signature}\n{status}\n".encode()
+                expected = hmac.new(bytes.fromhex(config["key"]), prefix + raw, hashlib.sha256).hexdigest()
+                if not hmac.compare_digest(expected, response.headers.get("X-Rig-Reply-Signature", "")):
+                    raise ValueError("Untrusted push reply")
+            reply = json.loads(raw or b"{}")
+            if not isinstance(reply, dict):
+                raise ValueError("Invalid push reply")
+            return status, reply, len(data)
+        try:
+            with self.opener.open(request, timeout=self.TIMEOUT) as response:
+                return read_reply(response)
+        except urllib.error.HTTPError as error:
+            with error:
+                return read_reply(error)
+
+    def push(self, snapshot, config=None):
+        """Returns (status, compressed size) of the last attempt, or None when nothing was sent."""
+        config = read(PUSH_FILE) if config is None else config
+        target = tuple(config.get(k) for k in ("url", "machine_id", "key", "digest"))
+        if self.target != target:
+            self.target = target
+            self.epoch = None
+            self.events_seq = 0
+            self.retry_at = 0
+            self.software_at = self.hardware_at = -1e9
+            self.forget_base()
+        if not config.get("url") or time.monotonic() < self.retry_at:
+            return None
+        now = time.monotonic()
+        extras = {}
+        if now - self.software_at >= 60:
+            extras["software"] = collect_software()
+        if now - self.hardware_at >= 3600:
+            extras["hardware"] = collect_inventory()
+        status = size = None
+        # A 409 (controller restarted, or it holds a different base) is answered at once with a full
+        # snapshot under the epoch it returned, so a resync costs no extra tick.
+        for _ in range(2):
+            message, body, full = self.message(snapshot, config, extras)
+            try:
+                status, reply, size = self.send(config, message)
+            except (OSError, ValueError) as error:
+                # A black-holed address costs TIMEOUT per attempt; the SSH fallback covers the gap.
+                self.retry_at = now + 30
+                print(f"push failed: {error}", file=sys.stderr, flush=True)
+                return None
+            if status != 409:
+                break
+            self.epoch = reply.get("epoch")
+            self.forget_base()
+        if status == 200:
+            self.base, self.base_seq = body, message["seq"]
+            self.since_full = 0 if full else self.since_full + 1
+            if isinstance(reply.get("events_seq"), int):
+                self.events_seq = max(self.events_seq, reply["events_seq"])
+            if "software" in extras:
+                self.software_at = now
+            if "hardware" in extras:
+                self.hardware_at = now
+            if isinstance(reply.get("policy"), dict):
+                try:
+                    set_policy(reply["policy"])
+                except (OSError, ValueError) as error:
+                    print(f"pushed policy rejected: {error}", file=sys.stderr, flush=True)
+        else:
+            # Wrong key, deleted machine or a broken controller: keep trying, but only once a minute.
+            self.forget_base()
+            self.retry_at = now + 60
+            print(f"push rejected: HTTP {status} {reply.get('error', '')}", file=sys.stderr, flush=True)
+        return status, size
+
+
+class PushWorker:
+    """One background sender, one replaceable pending sample. Slow HTTP/inventory must never
+    delay miner recovery or local snapshot publication. There is no unbounded backlog."""
+    def __init__(self, pusher=None):
+        self.pending = queue.Queue(maxsize=1)
+        self.pusher = pusher or Pusher()
+        self.thread = threading.Thread(target=self.run, name="telemetry-push", daemon=True)
+        self.thread.start()
+
+    def submit(self, snapshot):
+        try:
+            self.pending.put_nowait(snapshot)
+        except queue.Full:
+            with contextlib.suppress(queue.Empty):
+                self.pending.get_nowait()
+            self.pending.put_nowait(snapshot)
+
+    def run(self):
+        while True:
+            snapshot = self.pending.get()
+            try:
+                self.pusher.push(snapshot)
+            except Exception as error:
+                print(f"push failed: {error}", file=sys.stderr, flush=True)
+
+
+def set_push(path):
+    """Install the push target the controller uploaded (0600, deleted after reading)."""
+    source = Path(path)
+    if not re.fullmatch(r"/tmp/rigdeck-push-[0-9a-f-]{36}\.json", str(source)):
+        raise ValueError("Invalid push configuration path")
+    try:
+        config = json.loads(source.read_text())
+    finally:
+        with contextlib.suppress(OSError):
+            source.unlink()
+    url = str(config.get("url", ""))
+    if not re.fullmatch(r"https?://[^\s/]+(/\S*)?", url) or len(url) > 500:
+        raise ValueError("Invalid push URL")
+    uuid.UUID(str(config.get("machine_id")))
+    for key in ("key", "digest"):
+        if not re.fullmatch(r"[a-f0-9]{64}", str(config.get(key, ""))):
+            raise ValueError(f"Invalid push {key}")
+    config = {key: config[key] for key in ("url", "machine_id", "key", "digest")}
+    changed = read(PUSH_FILE).get("digest") != config["digest"]
+    atomic(PUSH_FILE, config)
+    if changed:
+        emit("info", "push_configured", f"已启用主动上报：{url}")
+    return {"digest": config["digest"], "url": url}
 
 
 def log_tail(name, lines=200):
@@ -2005,6 +2208,8 @@ def main():
             raise ValueError("Invalid reader account")
         atomic(ROOT / "reader.json", {"user": params[0]})
         print(json.dumps({"reader": params[0]}))
+    elif cmd == "set-push":
+        print(json.dumps(set_push(params[0])))
     elif cmd == "events":
         print(json.dumps(recent_events(int(params[0]) if params else 40)))
     elif cmd == "log":
@@ -2020,14 +2225,21 @@ def main():
     elif cmd == "watchdog":
         with lock(ROOT / "watchdog.lock", blocking=False):
             next_cleanup = 0
+            pusher = PushWorker()
             emit("info", "watchdog_started", f"运行层 {VERSION} 看门狗已启动")
             while True:
                 started = time.monotonic()
                 watchdog_once()
+                snapshot = None
                 try:
-                    publish_snapshot()
+                    snapshot = publish_snapshot()
                 except Exception as error:  # noqa: BLE001 - controller falls back to legacy collection
                     print(f"snapshot not published: {error}", file=sys.stderr, flush=True)
+                if snapshot is not None:
+                    try:
+                        pusher.submit(snapshot)
+                    except Exception as error:  # noqa: BLE001 - the controller falls back to SSH reads
+                        print(f"push failed: {error}", file=sys.stderr, flush=True)
                 if started >= next_cleanup:
                     try:
                         cleanup_runtime()

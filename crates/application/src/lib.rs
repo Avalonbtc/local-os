@@ -6,6 +6,7 @@ pub mod flights;
 pub mod identity;
 pub mod jobs;
 pub mod mining;
+pub mod push;
 pub mod settings;
 pub mod telemetry;
 use rig_domain::*;
@@ -20,6 +21,8 @@ pub struct App {
     pub runtime: Arc<dyn MinerRuntime>,
     pub adapters: Arc<HashMap<String, Arc<dyn MinerAdapter>>>,
     pub bmc: Arc<HashMap<String, Arc<dyn BmcProvider>>>,
+    /// Rig-initiated telemetry; `Default` disables it.
+    pub push: Arc<push::PushHub>,
 }
 impl App {
     pub async fn credential(&self, machine: uuid::Uuid, bmc: bool) -> Result<Credential> {

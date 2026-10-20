@@ -60,7 +60,31 @@ async fn main() -> anyhow::Result<()> {
     let remote = Arc::new(SshExecutor::default());
     let root = PathBuf::from(std::env::var("RIGDECK_DATA_DIR").unwrap_or_else(|_| "data".into()));
     let runtime = Arc::new(ScreenRuntime::new(remote.clone(), root.join("packages"))?);
+    // Rigs push their telemetry to this listener (plain HTTP, every request HMAC-signed with a
+    // per-machine key). "off" keeps the controller reading every rig over SSH.
+    let ingest_bind =
+        std::env::var("RIGDECK_INGEST_BIND").unwrap_or_else(|_| "0.0.0.0:8091".into());
+    let ingest_bind = (!ingest_bind.is_empty() && ingest_bind != "off").then_some(ingest_bind);
+    let push = match &ingest_bind {
+        Some(bind) => {
+            let port = bind
+                .parse::<std::net::SocketAddr>()
+                .map_err(|_| anyhow::anyhow!("RIGDECK_INGEST_BIND must be host:port or off"))?
+                .port();
+            let url = std::env::var("RIGDECK_INGEST_URL")
+                .ok()
+                .filter(|url| !url.is_empty());
+            if let Some(url) = &url
+                && !(url.starts_with("http://") || url.starts_with("https://"))
+            {
+                anyhow::bail!("RIGDECK_INGEST_URL must be an http(s) URL");
+            }
+            Some(rig_application::push::PushSettings { url, port })
+        }
+        None => None,
+    };
     let app = App {
+        push: Arc::new(rig_application::push::PushHub::new(push)),
         bios: Some(Arc::new(rig_infrastructure::bios::SumBios {
             root: root.join("bios"),
             binary: PathBuf::from(
@@ -93,7 +117,20 @@ async fn main() -> anyhow::Result<()> {
         &std::env::var("RIGDECK_STATIC_DIR").unwrap_or_else(|_| "frontend/dist".into()),
     );
     let worker = tokio::spawn(app.clone().run_worker());
-    let monitor = tokio::spawn(app.run_monitor());
+    let monitor = tokio::spawn(app.clone().run_monitor());
+    let ingest = match ingest_bind {
+        Some(bind) => {
+            let listener = tokio::net::TcpListener::bind(&bind).await?;
+            tracing::info!(%bind, "telemetry ingest listening");
+            let router = rig_api::http::ingest_router(app.clone());
+            Some(tokio::spawn(async move {
+                if let Err(error) = axum::serve(listener, router).await {
+                    tracing::error!(%error, "telemetry ingest stopped");
+                }
+            }))
+        }
+        None => None,
+    };
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(%bind,"RigDeck started");
     axum::serve(
@@ -106,6 +143,9 @@ async fn main() -> anyhow::Result<()> {
     .await?;
     worker.abort();
     monitor.abort();
+    if let Some(ingest) = ingest {
+        ingest.abort();
+    }
     Ok(())
 }
 

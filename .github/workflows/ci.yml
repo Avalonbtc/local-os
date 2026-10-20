@@ -30,11 +30,13 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: cargo test -p rig-infrastructure --test postgres -- --ignored
+      - run: cargo test -p rig-infrastructure --test telemetry_push -- --ignored
       - run: python3 tests/redfish/run.py
       - run: python3 tests/check_boundaries.py
       - run: python3 tests/test_dependencies.py
       - run: python3 tests/test_bios.py
       - run: python3 tests/test_gpu_oc.py
+      - run: python3 tests/test_push.py
       - run: cargo run -q -p rigdeck -- openapi > openapi.json
       - run: npm ci --no-audit --no-fund && npm run types && npm run build
         working-directory: frontend

@@ -435,6 +435,51 @@ systemctl restart rigdeck-watchdog.service
             .await?;
         Ok(())
     }
+    async fn configure_push(&self, m: &Machine, c: &Credential, target: &PushTarget) -> Result<()> {
+        let url = match &target.url {
+            Some(url) => url.clone(),
+            None => {
+                // The address this rig sees our SSH connection come from is one it can reach us at.
+                let output = self
+                    .remote
+                    .execute(m, c, "printf '%s' \"$SSH_CONNECTION\"", 15)
+                    .await?;
+                let controller = output
+                    .stdout
+                    .split_whitespace()
+                    .next()
+                    .and_then(|ip| ip.parse::<std::net::IpAddr>().ok())
+                    .ok_or_else(|| {
+                        Error::Unavailable(
+                            "无法从 SSH 连接确定主控地址，请在主控设置 RIGDECK_INGEST_URL".into(),
+                        )
+                    })?;
+                push_url(controller, target.port)
+            }
+        };
+        // The key travels in a 0600 file, never on a command line.
+        let path = format!("/tmp/rigdeck-push-{}.json", Uuid::new_v4());
+        let config = json!({"url":url,"machine_id":m.id,"key":target.key,"digest":target.digest});
+        self.remote
+            .upload(m, c, &path, config.to_string().as_bytes(), 0o600)
+            .await?;
+        let result = self
+            .call(m, c, &format!("set-push {}", shell_quote(&path)), 20)
+            .await;
+        if result.is_err() {
+            let _ = self
+                .remote
+                .execute(m, c, &format!("rm -f {}", shell_quote(&path)), 10)
+                .await;
+        }
+        result.map(|_| ())
+    }
+}
+pub fn push_url(controller: std::net::IpAddr, port: u16) -> String {
+    match controller {
+        std::net::IpAddr::V4(ip) => format!("http://{ip}:{port}/ingest/v1/push"),
+        std::net::IpAddr::V6(ip) => format!("http://[{ip}]:{port}/ingest/v1/push"),
+    }
 }
 /// `cat /proc/uptime snapshot.json` → `{now_uptime, snapshot}`; `None` for anything unexpected.
 pub fn parse_snapshot(stdout: &str) -> Option<Value> {

@@ -60,6 +60,7 @@ async fn bios_config(State(s): State<ApiState>, Path(id): Path<Uuid>) -> ApiResu
 }
 
 pub fn router(state: ApiState, static_dir: &str) -> Router {
+    let ingest = ingest_router(state.app.clone());
     let mcp = crate::mcp::service(state.app.clone());
     let protected = Router::new()
         .route("/me", get(me))
@@ -138,6 +139,53 @@ pub fn router(state: ApiState, static_dir: &str) -> Router {
         ))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+        .merge(ingest)
+}
+/// Rig telemetry push. Authenticated by the per-machine HMAC rather than a session or CSRF
+/// token, so the same router also runs on its own LAN listener (`RIGDECK_INGEST_BIND`).
+pub fn ingest_router(app: App) -> Router {
+    Router::new()
+        .route("/ingest/v1/push", post(ingest_push))
+        .layer(DefaultBodyLimit::max(rig_application::push::MAX_BODY))
+        .with_state(app)
+}
+async fn ingest_push(
+    State(app): State<App>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+    };
+    let result = app
+        .ingest_push(header("x-rig-machine"), header("x-rig-signature"), &body)
+        .await;
+    let (status, reply) = match result {
+        Ok(rig_application::push::PushReply::Accepted(reply)) => (StatusCode::OK, reply),
+        Ok(rig_application::push::PushReply::Resync(reply)) => (StatusCode::CONFLICT, reply),
+        Err(error) => return ApiError(error).into_response(),
+    };
+    let body = reply.to_string();
+    match app.sign_push_reply(
+        header("x-rig-machine"),
+        header("x-rig-signature"),
+        status.as_u16(),
+        body.as_bytes(),
+    ) {
+        Ok(signature) => (
+            status,
+            [
+                ("content-type", "application/json"),
+                ("x-rig-reply-signature", signature.as_str()),
+            ],
+            body,
+        )
+            .into_response(),
+        Err(error) => ApiError(error).into_response(),
+    }
 }
 fn cookie(headers: &HeaderMap) -> Option<&str> {
     headers

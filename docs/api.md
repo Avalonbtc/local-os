@@ -6,6 +6,10 @@
 
 设置页创建 AI 令牌，仅创建时显示明文。REST 与 `/mcp` 接受 `Authorization: Bearer ...`；MCP 不接受 Cookie 代替令牌。令牌具有管理员权限，可通过设置页撤销，新的请求立即失效，已打开终端最迟下次 15 秒身份检查断开。已提交持久化任务继续执行，取消需单独提交取消动作。
 
+## 矿机上报入口
+
+`POST /ingest/v1/push` 只给矿机运行层用，不在 OpenAPI 里，也不接受 Cookie 或令牌：请求头 `X-Rig-Machine`（机器 ID）和 `X-Rig-Signature`（对 zlib 压缩请求体的 HMAC-SHA256，密钥由主密钥按机器派生）。200 表示已保存，409 表示需要按回复里的 `epoch` 重发完整快照，401 签名不对，404 机器不存在或推送已关闭。默认在独立端口 `RIGDECK_INGEST_BIND`（8091）提供，主面板地址下同一路径也可用。报文格式见 [主动上报](2026-10-18_push-telemetry.md)。
+
 ## REST 入口
 
 | 路径 | 用途 |

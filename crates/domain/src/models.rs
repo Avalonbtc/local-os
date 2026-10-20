@@ -385,6 +385,23 @@ pub struct Observation {
     pub data: Value,
     pub error: Option<String>,
 }
+/// Where and how a rig's watchdog pushes its snapshot to the controller.
+#[derive(Clone)]
+pub struct PushTarget {
+    /// Explicit ingest URL; `None` means "the address this rig sees the controller's SSH from,
+    /// on `port`" (resolved by the runtime over the SSH connection).
+    pub url: Option<String>,
+    pub port: u16,
+    /// Per-machine HMAC key, 64 hex characters.
+    pub key: String,
+    /// Digest of key and URL setting; the rig reports it back so a stale target is noticed.
+    pub digest: String,
+}
+impl std::fmt::Debug for PushTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PushTarget([redacted])")
+    }
+}
 /// Farm-wide preferences edited under 设定 (HiveOS keeps the electricity tariff in farm settings).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FarmSettings {

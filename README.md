@@ -1,6 +1,6 @@
 # RigDeck
 
-自托管 Ubuntu 矿机管理面板。React / TypeScript 前端，Rust 模块化后端，PostgreSQL 18 持久化。主控通过 SSH 管理机器，通过 Redfish 或 IPMI 访问 BMC。
+自托管 Ubuntu 矿机管理面板。React / TypeScript 前端，Rust 模块化后端，PostgreSQL 18 持久化。主控通过 SSH 管理机器，通过 Redfish 或 IPMI 访问 BMC；运行统计由矿机看门狗每 10 秒压缩、签名后主动推送给主控（TCP 8091），只发变化的部分，推送不通时主控自动退回 SSH 读取，见 [主动上报](docs/2026-10-18_push-telemetry.md)。
 
 矿工由 **GNU screen + 运行脚本 + 本地 watchdog** 管理；systemd 仅负责开机恢复和 watchdog。每个实例有独立 screen 会话中的 `miner` 窗口、目录、API 端口和停止标记。网页关闭、SSH 断开、主控离线不会主动停止矿工。
 
@@ -35,6 +35,8 @@ sudo bash scripts/native/install.sh --host rigdeck.local
 read -rsp '设置管理员密码（至少 12 字符）: ' P; printf '\n'
 RIGDECK_ADMIN_PASSWORD="$P" bash scripts/native/rigdeck.sh create-admin admin; unset P
 ```
+
+矿机需要能访问主控的 TCP 8091（统计上报，`RIGDECK_INGEST_BIND`）；主控有防火墙时对矿机网段放行。
 
 安装脚本会装好 PostgreSQL 18、Node.js 22、Rust 1.91.1（装在运行用户的 `~/.cargo`）、ipmitool、Caddy，创建数据库、`/etc/rigdeck/rigdeck.env`、主密钥 `/etc/rigdeck/master.key` 和 `rigdeck.service`，然后编译并启动。重复运行不会覆盖已有配置、密钥和数据库。
 

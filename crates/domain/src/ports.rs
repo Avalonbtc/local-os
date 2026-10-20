@@ -177,6 +177,11 @@ pub trait SecretVault: Send + Sync {
     fn password_hash(&self, value: &str) -> Result<String>;
     fn verify_password(&self, value: &str, hash: &str) -> bool;
     fn random_token(&self) -> String;
+    /// Per-machine telemetry push key (64 hex), derived from the master key so nothing extra is
+    /// stored. `None` when this vault cannot derive keys.
+    fn push_key(&self, _machine: Uuid) -> Option<String> {
+        None
+    }
 }
 #[async_trait]
 pub trait RemoteExecutor: Send + Sync {
@@ -302,6 +307,15 @@ pub trait MinerRuntime: Send + Sync {
         _policy: &Value,
     ) -> Result<()> {
         Err(Error::Unavailable("运行层不支持策略下发".into()))
+    }
+    /// Tell the rig's watchdog where to push its snapshot (runtime ≥ 0.4.0).
+    async fn configure_push(
+        &self,
+        _machine: &Machine,
+        _credential: &Credential,
+        _target: &PushTarget,
+    ) -> Result<()> {
+        Err(Error::Unavailable("运行层不支持主动上报".into()))
     }
 }
 pub trait MinerAdapter: Send + Sync {

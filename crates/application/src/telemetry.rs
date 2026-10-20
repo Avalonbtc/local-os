@@ -145,8 +145,19 @@ impl App {
         let mut cached: Option<(Machine, std::result::Result<Credential, String>)> = None;
         let mut last_event_seq = i64::MIN;
         let mut last_policy_push: Option<tokio::time::Instant> = None;
+        let mut last_push_setup: Option<tokio::time::Instant> = None;
         loop {
             tick.tick().await;
+            if channel == "ssh"
+                && self
+                    .push_target(id)
+                    .is_some_and(|t| self.push.live(id, &t.digest))
+            {
+                // The rig's watchdog pushed system, mining, software and hardware itself and got
+                // its policy in the reply: nothing to read over SSH.
+                cycle += 1;
+                continue;
+            }
             if cached.is_none() || cycle.is_multiple_of(6) {
                 cached = match self.repository.machine(id).await {
                     Ok(m) => {
@@ -211,7 +222,11 @@ impl App {
                 Ok(Some(raw)) => {
                     if let Some(parsed) = from_snapshot(&raw, Utc::now()) {
                         legacy = false;
-                        for (kind, data) in [("system", parsed.system), ("mining", parsed.mining)] {
+                        let mut system = parsed.system;
+                        if let Some(object) = system.as_object_mut() {
+                            object.insert("transport".into(), Value::from("ssh"));
+                        }
+                        for (kind, data) in [("system", system), ("mining", parsed.mining)] {
                             send(
                                 &sink,
                                 Observation {
@@ -255,6 +270,29 @@ impl App {
                                 tracing::warn!(%error, machine = %id, "recovery policy not delivered");
                             }
                         }
+                        // Runtime ≥ 0.4.0 reports push_digest (null until configured): point its
+                        // watchdog at us so later samples arrive without SSH.
+                        if raw["snapshot"].get("push_digest").is_some()
+                            && let Some(target) = self.push_target(id)
+                            && raw["snapshot"]["push_digest"].as_str()
+                                != Some(target.digest.as_str())
+                            && last_push_setup
+                                .is_none_or(|at| at.elapsed() > Duration::from_secs(300))
+                        {
+                            last_push_setup = Some(tokio::time::Instant::now());
+                            match self
+                                .runtime
+                                .configure_push(machine, credential, &target)
+                                .await
+                            {
+                                Ok(()) => {
+                                    tracing::info!(machine = %id, "telemetry push configured")
+                                }
+                                Err(error) => {
+                                    tracing::warn!(%error, machine = %id, "telemetry push not configured")
+                                }
+                            }
+                        }
                     }
                 }
                 Ok(None) => {}
@@ -292,7 +330,7 @@ impl App {
     }
 }
 
-async fn send(sink: &tokio::sync::mpsc::Sender<Observation>, observation: Observation) {
+pub(crate) async fn send(sink: &tokio::sync::mpsc::Sender<Observation>, observation: Observation) {
     if sink.send(observation).await.is_err() {
         tracing::warn!("telemetry writer stopped");
     }
@@ -420,6 +458,7 @@ fn summarize(observations: Vec<Observation>) -> Vec<Observation> {
                     "cpu_power_source",
                     "addresses",
                     "runtime_version",
+                    "transport",
                 ],
                 "mining" => return Some(observation),
                 "power" => &["state", "power_w"],
