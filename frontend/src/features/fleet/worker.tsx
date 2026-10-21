@@ -27,12 +27,9 @@ import {
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
 import {
-  IconBiosChip,
   IconLog,
   IconPlayStop,
-  IconPlug,
   IconPower,
   IconRestart,
   IconRocket,
@@ -309,10 +306,8 @@ function machineInput(machine: Machine, policy: Data): MachineInput {
     group: machine.group,
     tags: machine.tags,
     is_controller: machine.is_controller,
-    bmc: machine.bmc ?? null,
     credential: null,
     sudo_password: null,
-    bmc_credential: null,
     policy,
   };
 }
@@ -443,7 +438,6 @@ export function WorkerActions({
 }) {
   const { message, modal } = App.useApp();
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
   const names = instances.map((i) => i.instance as string).filter(Boolean);
   const run = (title: string, action: Parameters<typeof submitJob>[0]["action"], danger = false) =>
     modal.confirm({
@@ -521,28 +515,10 @@ export function WorkerActions({
           if (key === "reboot")
             run("重启系统？矿工会在开机后按期望状态自动恢复。", { kind: "command", script: REBOOT, timeout_seconds: 60 });
           else if (key === "shutdown")
-            run("关机？关机后只能通过 BMC 或现场开机。", { kind: "command", script: SHUTDOWN, timeout_seconds: 60 }, true);
+            run("关机？关机后只能现场开机（或用机房的远程电源）。", { kind: "command", script: SHUTDOWN, timeout_seconds: 60 }, true);
           else onBatch(key);
         },
       )}
-      {menuTool(
-        machine.bmc ? "BMC 电源" : "BMC 电源（未配置 BMC）",
-        <IconPlug />,
-        [
-          { key: "on", label: "开机" },
-          { key: "shutdown", label: "优雅关机" },
-          { key: "force_restart", label: "强制重启（断电重启）", danger: true },
-          { key: "force_off", label: "强制断电", danger: true },
-        ],
-        ({ key }) =>
-          run(
-            `通过 BMC 执行「${{ on: "开机", shutdown: "优雅关机", force_restart: "强制重启", force_off: "强制断电" }[key]}」？`,
-            { kind: "power", operation: key },
-            key.startsWith("force"),
-          ),
-        !machine.bmc,
-      )}
-      {tool("BIOS", <IconBiosChip />, () => navigate(`/bios/${machine.id}`), !machine.bmc)}
       {tool("部署 / 更新运行层", <IconUpload />, () => onBatch("bootstrap"))}
       {tool("设定", <IconSettings />, () => onOpen("settings"))}
     </div>

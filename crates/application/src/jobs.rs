@@ -5,8 +5,7 @@ use uuid::Uuid;
 
 /// Actions the rig runtime records under the target's operation id (or, for bootstrap, that are
 /// idempotent installs). After a lost connection the worker re-queries them instead of leaving
-/// the machine locked until someone resolves the target by hand. BMC power and BIOS writes are
-/// excluded: their state cannot be read back by operation id.
+/// the machine locked until someone resolves the target by hand.
 const AUTO_RECONCILE: &[&str] = &[
     "apply",
     "miner",
@@ -34,24 +33,6 @@ impl App {
         let mut seen = HashSet::new();
         input.machine_ids.retain(|id| seen.insert(*id));
         match &input.action {
-            Action::BiosRead { .. } | Action::BiosWrite { .. } => {
-                if input.machine_ids.len() != 1 || self.bios.is_none() {
-                    return Err(Error::Validation("BIOS 操作需要单台机器及 SUM 支持".into()));
-                }
-                let machine = self.repository.machine(input.machine_ids[0]).await?;
-                if machine.bmc.is_none() {
-                    return Err(Error::Validation("请先配置 BMC".into()));
-                }
-                if let Action::BiosWrite { revision, changes } = &input.action
-                    && (revision.len() != 64
-                        || !revision.bytes().all(|b| b.is_ascii_hexdigit())
-                        || changes.is_empty()
-                        || changes.len() > 64
-                        || changes.iter().any(|(k, v)| k.len() > 2048 || v.len() > 256))
-                {
-                    return Err(Error::Validation("BIOS 修改或配置版本无效".into()));
-                }
-            }
             Action::Command {
                 script,
                 timeout_seconds,
@@ -76,12 +57,6 @@ impl App {
                 {
                     return Err(Error::Validation("矿工操作或实例无效".into()));
                 }
-            }
-            Action::Power { operation }
-                if !["on", "shutdown", "reboot", "force_off", "force_restart"]
-                    .contains(&operation.as_str()) =>
-            {
-                return Err(Error::Validation("电源动作无效".into()));
             }
             Action::GpuOc {
                 profile_name,
@@ -122,15 +97,6 @@ impl App {
         let mut machines = Vec::new();
         for id in &input.machine_ids {
             machines.push(self.repository.machine(*id).await?);
-        }
-        if matches!(input.action, Action::Power { .. }) {
-            if !input.include_controller {
-                machines.retain(|m| !m.is_controller);
-            }
-            machines.sort_by_key(|m| m.is_controller);
-        }
-        if machines.is_empty() {
-            return Err(Error::Validation("排除主控后没有目标机器".into()));
         }
         input.machine_ids = machines.iter().map(|m| m.id).collect();
         let mut snapshot =

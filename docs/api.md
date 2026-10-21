@@ -10,6 +10,10 @@
 
 `POST /ingest/v1/push` 只给矿机运行层用，不在 OpenAPI 里，也不接受 Cookie 或令牌：请求头 `X-Rig-Machine`（机器 ID）和 `X-Rig-Signature`（对 zlib 压缩请求体的 HMAC-SHA256，密钥由主密钥按机器派生）。200 表示已保存，409 表示需要按回复里的 `epoch` 重发完整快照，401 签名不对，404 机器不存在或推送已关闭。默认在独立端口 `RIGDECK_INGEST_BIND`（8091）提供，主面板地址下同一路径也可用。报文格式见 [主动上报](2026-10-18_push-telemetry.md)。
 
+## 矿机加入与连接入口
+
+这些路径给矿机用，不需要登录：`GET /agent/install.sh` 安装脚本，`GET /agent/v1/runtime.py` 运行层（脚本按 SHA256 校验），`POST /agent/v1/enroll` 用安装密钥登记（密钥无效、撤销、过期或台数用完返回 403），`GET /agent/v1/connect` 为 agent 的 WebSocket，连接后先完成 HMAC 挑战。消息格式见 `crates/application/src/agent.rs`。
+
 ## REST 入口
 
 | 路径 | 用途 |
@@ -25,7 +29,8 @@
 | `/api/v1/job-targets/{id}/resolve` | 重新对账，或记录人工核实结果 |
 | `/api/v1/telemetry` | 最近样本，可按 machine_id 筛选 |
 | `/api/v1/machines/{id}/history` | kind、hours 历史查询 |
-| `/api/v1/machines/{id}/bmc/{kind}` | power、sensors、events |
+| `/api/v1/agents` | 当前在线的 agent 连接（机器、版本、来源地址） |
+| `/api/v1/enrollment-tokens`、`/{id}` | 安装密钥：列表（含安装命令）、新建（分组、标签、有效期、台数上限）、`DELETE` 撤销 |
 | `/api/v1/audit`、`/tokens` | 操作记录、令牌管理 |
 | `/api/v1/settings/farm` | 矿场设定（电价，用于预估日电费）；`GET` 读取，`PUT` 保存 |
 | `/api/v1/openapi.json` | 运行时生成 OpenAPI 3.1 |

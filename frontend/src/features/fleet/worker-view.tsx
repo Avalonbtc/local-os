@@ -87,24 +87,21 @@ function gpuRates(gpus: Gpu[], instances: Data[]) {
 export function WorkerBand({
   machine,
   system,
-  power,
   actions,
 }: {
   machine: Machine;
   system?: Observation;
-  power?: Observation;
   actions?: ReactNode;
 }) {
   const d = data(system?.data);
   const online = isFresh(system);
   const reading = machinePower(system);
-  const off = isFresh(power, 90) && String(data(power?.data).state ?? "").toLowerCase() === "off";
   return (
     <div className={`wk-band ${online ? "" : "offline"}`}>
       <div className="wk-band-name">
         <strong>{machine.name}</strong>
         {machine.is_controller && <small className="wk-controller">主控</small>}
-        {!online && <span className="wk-band-state">{off ? "已关机" : "离线"}</span>}
+        {!online && <span className="wk-band-state">离线</span>}
       </div>
       <div className="wk-band-tools">{actions}</div>
       <div className="wk-band-right">

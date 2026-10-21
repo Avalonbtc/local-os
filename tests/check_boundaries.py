@@ -12,7 +12,7 @@ allowed = {"rig-domain": set(), "rig-application": {"rig-domain"},
            "rig-api": {"rig-domain", "rig-application"},
            "rigdeck": {"rig-domain", "rig-application", "rig-infrastructure", "rig-api"}}
 errors = []
-for module in ("identity", "fleet", "catalog", "flights", "mining", "jobs", "telemetry", "bmc", "audit"):
+for module in ("identity", "fleet", "catalog", "flights", "mining", "jobs", "telemetry", "agent", "enroll", "audit"):
     if not (root / "crates/application/src" / f"{module}.rs").is_file():
         errors.append(f"missing application module: {module}")
 for package in metadata["packages"]:

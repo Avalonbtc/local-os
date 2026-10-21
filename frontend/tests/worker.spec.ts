@@ -17,7 +17,7 @@ test("worker page shows the HiveOS layout for a CPU + GPU rig", async ({ page })
     if (path.endsWith("/me")) body = { actor: { id, name: "fixture", token_id: null }, csrf: "test", expires_at: "2099-01-01" };
     if (path.endsWith("/log")) body = { instance: "gpu-1", text: "[2026-09-25] speed 72.33 MH/s", size: 30 };
     if (path.endsWith("/machines"))
-      body = [{ id, name: "test", host: "10.5.30.216", port: 22, username: "root", tags: [], policy: {}, bmc: null, group: "", is_controller: false }];
+      body = [{ id, name: "test", host: "10.5.30.216", port: 22, username: "root", tags: [], policy: {}, group: "", is_controller: false }];
     if (path.endsWith("/messages"))
       body = dismissed.length
         ? []

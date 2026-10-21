@@ -5,46 +5,6 @@
         "oneOf": [
           {
             "properties": {
-              "discard_pending": {
-                "default": false,
-                "description": "After a reboot, accept the read-back values and drop the pending marker.",
-                "type": "boolean"
-              },
-              "kind": {
-                "const": "bios_read",
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "changes": {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              "kind": {
-                "const": "bios_write",
-                "type": "string"
-              },
-              "revision": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "revision",
-              "changes"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
               "kind": {
                 "const": "bootstrap",
                 "type": "string"
@@ -114,22 +74,6 @@
               "kind",
               "operation",
               "instances"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "kind": {
-                "const": "power",
-                "type": "string"
-              },
-              "operation": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "operation"
             ],
             "type": "object"
           },
@@ -265,6 +209,39 @@
           "releases"
         ],
         "title": "AdapterDescription",
+        "type": "object"
+      },
+      "AgentStatus": {
+        "description": "A live agent connection.",
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "connected_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "machine_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "machine_id",
+          "connected_at",
+          "version",
+          "hostname"
+        ],
+        "title": "AgentStatus",
         "type": "object"
       },
       "AmdOc": {
@@ -412,150 +389,6 @@
         "title": "AuditEvent",
         "type": "object"
       },
-      "BiosSetting": {
-        "properties": {
-          "condition": {
-            "type": "string"
-          },
-          "group": {
-            "type": "string"
-          },
-          "help": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "license": {
-            "type": "string"
-          },
-          "maximum": {
-            "format": "int64",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "minimum": {
-            "format": "int64",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "name": {
-            "type": "string"
-          },
-          "options": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "step": {
-            "format": "int64",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "value": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "group",
-          "value",
-          "kind",
-          "options",
-          "help",
-          "condition",
-          "license"
-        ],
-        "type": "object"
-      },
-      "BiosSnapshot": {
-        "properties": {
-          "last_operation": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "licenses": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "machine_id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "observed_at": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "pending": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object"
-          },
-          "revision": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "settings": {
-            "items": {
-              "$ref": "#/components/schemas/BiosSetting"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "machine_id",
-          "settings",
-          "licenses",
-          "pending"
-        ],
-        "title": "BiosSnapshot",
-        "type": "object"
-      },
-      "BmcConfig": {
-        "properties": {
-          "ca_pem": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "provider": {
-            "default": "redfish",
-            "type": "string"
-          },
-          "url": {
-            "type": "string"
-          },
-          "username": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "url",
-          "username"
-        ],
-        "type": "object"
-      },
       "CatalogInput": {
         "properties": {
           "data": true,
@@ -678,6 +511,121 @@
             "type": "object"
           }
         ]
+      },
+      "EnrollmentToken": {
+        "description": "An install key: `curl …/agent/install.sh | sudo bash -s -- <token>` adds a machine.",
+        "properties": {
+          "command": {
+            "default": "",
+            "description": "The full install command for this key.",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "group": {
+            "description": "Group and tags given to machines that join with this key.",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "max_uses": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "revoked_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "token": {
+            "default": "",
+            "description": "The key itself. Derived from the master key, so it can be shown again; filled in by the\napplication, never stored.",
+            "type": "string"
+          },
+          "uses": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "group",
+          "tags",
+          "uses",
+          "created_by",
+          "created_at"
+        ],
+        "title": "EnrollmentToken",
+        "type": "object"
+      },
+      "EnrollmentTokenInput": {
+        "properties": {
+          "expires_in_hours": {
+            "description": "Empty: never expires.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "group": {
+            "default": "",
+            "type": "string"
+          },
+          "max_uses": {
+            "description": "Empty: unlimited.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "tags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "EnrollmentTokenInput",
+        "type": "object"
       },
       "FarmSettings": {
         "description": "Farm-wide preferences edited under 设定 (HiveOS keeps the electricity tariff in farm settings).",
@@ -955,16 +903,6 @@
       },
       "Machine": {
         "properties": {
-          "bmc": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/BmcConfig"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "created_at": {
             "format": "date-time",
             "type": "string"
@@ -1000,6 +938,11 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "transport": {
+            "default": "ssh",
+            "description": "\"ssh\": the controller connects to the rig. \"agent\": the rig's rigdeck-agent keeps a\nconnection open to the controller and receives its commands over it.",
+            "type": "string"
           },
           "username": {
             "type": "string"
@@ -1101,26 +1044,6 @@
       },
       "MachineInput": {
         "properties": {
-          "bmc": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/BmcConfig"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "bmc_credential": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Credential"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "credential": {
             "anyOf": [
               {
@@ -1587,6 +1510,51 @@
         ]
       }
     },
+    "/api/v1/agents": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AgentStatus"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Forbidden or invalid CSRF"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict"
+          },
+          "503": {
+            "description": "Dependency unavailable"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/audit": {
       "get": {
         "responses": {
@@ -1821,6 +1789,128 @@
           }
         ]
       }
+    },
+    "/api/v1/enrollment-tokens": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EnrollmentToken"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Forbidden or invalid CSRF"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict"
+          },
+          "503": {
+            "description": "Dependency unavailable"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrollmentTokenInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollmentToken"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Forbidden or invalid CSRF"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict"
+          },
+          "503": {
+            "description": "Dependency unavailable"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/enrollment-tokens/{id}": {
+      "delete": {
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "id",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
     },
     "/api/v1/flight-sheets": {
       "get": {
@@ -2544,118 +2634,6 @@
           }
         ]
       }
-    },
-    "/api/v1/machines/{id}/bios": {
-      "get": {
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BiosSnapshot"
-                }
-              }
-            },
-            "description": "Success"
-          },
-          "400": {
-            "description": "Validation error"
-          },
-          "401": {
-            "description": "Authentication required"
-          },
-          "403": {
-            "description": "Forbidden or invalid CSRF"
-          },
-          "404": {
-            "description": "Not found"
-          },
-          "409": {
-            "description": "Conflict"
-          },
-          "503": {
-            "description": "Dependency unavailable"
-          }
-        },
-        "security": [
-          {
-            "session": []
-          },
-          {
-            "bearer": []
-          }
-        ]
-      },
-      "parameters": [
-        {
-          "in": "path",
-          "name": "id",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ]
-    },
-    "/api/v1/machines/{id}/bmc/{kind}": {
-      "get": {
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Object"
-                }
-              }
-            },
-            "description": "Success"
-          },
-          "400": {
-            "description": "Validation error"
-          },
-          "401": {
-            "description": "Authentication required"
-          },
-          "403": {
-            "description": "Forbidden or invalid CSRF"
-          },
-          "404": {
-            "description": "Not found"
-          },
-          "409": {
-            "description": "Conflict"
-          },
-          "503": {
-            "description": "Dependency unavailable"
-          }
-        },
-        "security": [
-          {
-            "session": []
-          },
-          {
-            "bearer": []
-          }
-        ]
-      },
-      "parameters": [
-        {
-          "in": "path",
-          "name": "kind",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "in": "path",
-          "name": "id",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ]
     },
     "/api/v1/machines/{id}/history": {
       "get": {

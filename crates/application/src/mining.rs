@@ -34,66 +34,7 @@ impl App {
     ) -> Result<()> {
         let machine = self.repository.machine(task.target.machine_id).await?;
         let kind = task.action["kind"].as_str().unwrap_or("");
-        if ["bios_read", "bios_write"].contains(&kind) {
-            let credential = self.credential(machine.id, true).await?;
-            let provider = self
-                .bios
-                .as_ref()
-                .ok_or_else(|| Error::Unavailable("SUM 未配置".into()))?;
-            let mut remote = provider
-                .execute(
-                    &machine,
-                    &credential,
-                    task.target.operation_id,
-                    &task.action,
-                    task.reconcile,
-                )
-                .await?;
-            redact_operation(&mut remote, &credential);
-            return self
-                .finish_with_retry(task.target.id, task.lease, &remote.status, &remote)
-                .await;
-        }
-        if kind == "power" {
-            let config = machine
-                .bmc
-                .as_ref()
-                .ok_or_else(|| Error::Validation("未配置 BMC".into()))?;
-            let credential = self.credential(machine.id, true).await?;
-            let provider = self
-                .bmc
-                .get(&config.provider)
-                .ok_or_else(|| Error::Validation("BMC Provider 不存在".into()))?;
-            if task.reconcile {
-                let state = provider.read(config, &credential, "power").await?;
-                let remote = RemoteOperation {
-                    status: "unknown".into(),
-                    output: String::new(),
-                    truncated: false,
-                    result: Some(state),
-                    error: Some(
-                        "电源请求结果不明；已查询当前状态，不自动重复发送动作。核实后解除锁。"
-                            .into(),
-                    ),
-                };
-                return self
-                    .finish_with_retry(task.target.id, task.lease, "unknown", &remote)
-                    .await;
-            }
-            let operation = task.action["operation"].as_str().unwrap_or("");
-            let result = provider.power(config, &credential, operation).await?;
-            let remote = RemoteOperation {
-                status: "succeeded".into(),
-                output: String::new(),
-                truncated: false,
-                result: Some(result),
-                error: None,
-            };
-            return self
-                .finish_with_retry(task.target.id, task.lease, "succeeded", &remote)
-                .await;
-        }
-        let credential = self.credential(machine.id, false).await?;
+        let credential = self.credential(machine.id).await?;
         if kind == "bootstrap" {
             // Bootstrap is a versioned, atomic, idempotent installation and does not start miners.
             let mut result = self.runtime.bootstrap(&machine, &credential).await?;

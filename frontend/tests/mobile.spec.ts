@@ -12,7 +12,7 @@ test("fleet list and worker page fit a phone screen", async ({ page }) => {
     let body: unknown = [];
     if (path.endsWith("/me")) body = { actor: { id, name: "fixture", token_id: null }, csrf: "test", expires_at: "2099-01-01" };
     if (path.endsWith("/machines"))
-      body = [{ id, name: "7702-01", host: "10.168.2.120", port: 22, username: "root", tags: [], policy: {}, bmc: null, group: "", is_controller: false }];
+      body = [{ id, name: "7702-01", host: "10.168.2.120", port: 22, username: "root", tags: [], policy: {}, group: "", is_controller: false }];
     if (path.includes("telemetry"))
       body = [
         { machine_id: id, kind: "system", observed_at: now, error: null, data: {

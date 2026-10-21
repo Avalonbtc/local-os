@@ -68,7 +68,7 @@ impl TelemetryBatch {
                     }
                 }
             }
-            if ["system", "mining", "power", "sensors"].contains(&o.kind.as_str()) {
+            if ["system", "mining"].contains(&o.kind.as_str()) {
                 metrics.push(o, data.clone());
             }
             match newest.get(&(o.machine_id, o.kind.as_str())) {
@@ -139,6 +139,7 @@ fn job_label(row: &Value) -> String {
             None => "应用超频".into(),
         },
         "gpu_oc_reset" => "恢复默认超频".into(),
+        // Labels for jobs recorded before BMC and BIOS management were removed.
         "bios_read" if action["discard_pending"] == true => "读取 BIOS 并清除待生效标记".into(),
         "bios_read" => "读取 BIOS".into(),
         "bios_write" => format!(
@@ -390,7 +391,7 @@ impl TelemetryRepository for PgStore {
         sqlx::query_scalar::<_,Value>("SELECT to_jsonb(o) || jsonb_build_object('data',CASE WHEN o.kind='system' AND jsonb_typeof(o.data)='object' THEN COALESCE((SELECT h.data FROM latest_observations h WHERE h.machine_id=o.machine_id AND h.kind='hardware'),'{}'::jsonb) || o.data ELSE o.data END) FROM latest_observations o JOIN machines m ON m.id=o.machine_id WHERE m.deleted_at IS NULL AND ($1::uuid IS NULL OR machine_id=$1) ORDER BY machine_id,kind").bind(machine).fetch_all(&self.pool).await.map_err(db)?.into_iter().map(decode).collect()
     }
     async fn latest_summary(&self, machine: Option<Uuid>) -> Result<Vec<Observation>> {
-        sqlx::query_scalar::<_, Value>("SELECT jsonb_build_object('machine_id',o.machine_id,'kind',o.kind,'observed_at',o.observed_at,'error',o.error,'data',metric_values(o.kind,o.data)) FROM latest_observations o JOIN machines m ON m.id=o.machine_id WHERE m.deleted_at IS NULL AND ($1::uuid IS NULL OR o.machine_id=$1) AND o.kind IN ('system','mining','power','sensors') ORDER BY o.machine_id,o.kind")
+        sqlx::query_scalar::<_, Value>("SELECT jsonb_build_object('machine_id',o.machine_id,'kind',o.kind,'observed_at',o.observed_at,'error',o.error,'data',metric_values(o.kind,o.data)) FROM latest_observations o JOIN machines m ON m.id=o.machine_id WHERE m.deleted_at IS NULL AND ($1::uuid IS NULL OR o.machine_id=$1) AND o.kind IN ('system','mining') ORDER BY o.machine_id,o.kind")
             .bind(machine).fetch_all(&self.pool).await.map_err(db)?.into_iter().map(decode).collect()
     }
     async fn history(&self, machine: Uuid, kind: &str, hours: u32) -> Result<Vec<Observation>> {

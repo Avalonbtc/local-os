@@ -26,19 +26,17 @@ import {
   useMachines,
   useTelemetry,
   latest,
-  machinePower,
   minerSampleFresh,
   minerStatsFresh,
   submitJob,
+  useAgents,
   type Data,
 } from "../../shared/api";
 import {
   QueryState,
   bytes,
-  number,
   hashrate,
   Status,
-  PowerState,
   JsonView,
 } from "../../shared/ui";
 import { WorkerOverclock } from "../overclock";
@@ -62,16 +60,12 @@ export function MachineDetail() {
   const tab = params.get("tab") ?? "overview";
   const machines = useMachines();
   const telemetry = useTelemetry(id);
+  const agents = useAgents();
   const machine = machines.data?.find((m) => m.id === id);
   const system = latest(telemetry.data, id!, "system");
   const mining = latest(telemetry.data, id!, "mining");
-  const sensors = latest(telemetry.data, id!, "sensors");
-  const power = latest(telemetry.data, id!, "power");
   const software = latest(telemetry.data, id!, "software");
-  const events = latest(telemetry.data, id!, "events");
   const d = data(system?.data);
-  const powerReading = machinePower(system);
-  const powerWatts = powerReading.watts;
   const instances: Data[] = data(mining?.data).instances ?? [];
   const [instance, setInstance] = useState<string>();
   const [editor, setEditor] = useState(false);
@@ -100,7 +94,7 @@ export function MachineDetail() {
           { key: "board", label: "主板", children: d.board ?? "未采集" },
           { key: "os", label: "操作系统", children: d.os ?? "未采集" },
           { key: "kernel", label: "内核", children: d.kernel ?? "未采集" },
-          { key: "bios", label: "BIOS", children: d.bios ?? "未采集" },
+          { key: "bios", label: "BIOS 版本", children: d.bios ?? "未采集" },
           {
             key: "topology",
             label: "拓扑",
@@ -115,11 +109,17 @@ export function MachineDetail() {
             children: (d.addresses ?? []).map((a: Data) => a.address).join(", ") || "未采集",
           },
           {
-            key: "ssh",
-            label: "SSH",
-            children: `${machine.username}@${machine.host}:${machine.port}`,
+            key: "connection",
+            label: "连接方式",
+            children: machine.transport === "agent"
+              ? (() => {
+                  const status = agents.data?.find((a) => a.machine_id === machine.id);
+                  return status
+                    ? `主动连接 · 在线（agent ${status.version || "?"}，来自 ${status.address ?? "—"}）`
+                    : "主动连接 · 未连接（rigdeck-agent 离线）";
+                })()
+              : `SSH ${machine.username}@${machine.host}:${machine.port}`,
           },
-          { key: "bmc", label: "BMC", children: machine.bmc?.url ?? "未配置" },
           {
             key: "tags",
             label: "分组 / 标签",
@@ -199,7 +199,6 @@ export function MachineDetail() {
       <WorkerBand
         machine={machine}
         system={system}
-        power={power}
         actions={
           <WorkerActions
             machine={machine}
@@ -303,62 +302,6 @@ export function MachineDetail() {
             children: <WorkerOverclock machine={machine} />,
           },
           {
-            key: "sensors",
-            label: "传感器",
-            children: (
-              <>
-                {sensors?.error && (
-                  <Alert type="warning" message={sensors.error} />
-                )}
-                <Space className="detail-actions">
-                  <Button
-                    disabled={!machine.bmc}
-                    onClick={() => setBatch("power")}
-                  >
-                    BMC 电源操作
-                  </Button>
-                  <PowerState observation={power} />
-                  <span title={powerReading.source}>{powerReading.label}：{powerWatts === undefined ? "未采集" : `${number(powerWatts, 0)} W`}</span>
-                  <span className="muted">
-                    传感器每 60 秒采集 ·{" "}
-                    {sensors?.observed_at
-                      ? new Date(sensors.observed_at).toLocaleString()
-                      : "暂无数据"}
-                  </span>
-                </Space>
-                <Table
-                  rowKey="row_id"
-                  dataSource={(data(sensors?.data).items ?? []).map(
-                    (item: Data, index: number) => ({
-                      ...item,
-                      row_id: `${item.name ?? "sensor"}-${index}`,
-                    }),
-                  )}
-                  columns={[
-                    { title: "传感器", dataIndex: "name" },
-                    {
-                      title: "读数",
-                      dataIndex: "reading",
-                      render: (v) => v ?? "不支持 / 缺失",
-                    },
-                    { title: "单位", dataIndex: "unit" },
-                    {
-                      title: "健康",
-                      dataIndex: "health",
-                      render: (v) => v ?? "未知",
-                    },
-                  ]}
-                />
-                {data(sensors?.data).unsupported?.length > 0 && (
-                  <Alert
-                    type="info"
-                    message={`未提供的能力：${data(sensors?.data).unsupported.join(", ")}`}
-                  />
-                )}
-              </>
-            ),
-          },
-          {
             key: "console",
             label: "矿工控制台",
             children: (
@@ -402,15 +345,6 @@ export function MachineDetail() {
               <>
                 <h3>矿工日志</h3>
                 <MinerLogViewer id={id!} instances={instances} />
-                {machine.bmc && (
-                  <details>
-                    <summary>BMC 硬件事件</summary>
-                    {events?.error && (
-                      <Alert type="warning" message={events.error} />
-                    )}
-                    <JsonView value={data(events?.data).items ?? []} />
-                  </details>
-                )}
               </>
             ),
           },

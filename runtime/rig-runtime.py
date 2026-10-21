@@ -32,7 +32,7 @@ import urllib.request
 import uuid
 import zlib
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 ROOT = Path(os.environ.get("RIG_RUNTIME_ROOT", "/var/lib/rigdeck"))
 # Controller reads this with a plain `cat` (no Python start-up, no sudo). /run is tmpfs.
 SNAPSHOT_DIR = Path(os.environ.get("RIG_SNAPSHOT_DIR", "/run/rigdeck"))
@@ -1698,6 +1698,435 @@ def set_push(path):
     return {"digest": config["digest"], "url": url}
 
 
+# ---------------------------------------------------------------------------------------------
+# Agent: HiveOS-style control channel. `rig-miner enroll` joins the farm with an install key;
+# `rig-miner agent` (systemd: rigdeck-agent) keeps one WebSocket open to the controller and runs
+# what it is sent: commands, file uploads and terminals. The controller drives the same
+# rig-miner subcommands through it that it would otherwise run over SSH.
+# ---------------------------------------------------------------------------------------------
+AGENT_FILE = ROOT / "agent.json"
+AGENT_STDOUT_LIMIT = 2 * 1024 * 1024
+AGENT_STDERR_LIMIT = 64 * 1024
+
+
+def machine_fingerprint(base=Path("/")):
+    """Stable identity of this computer: the board UUID and physical NIC MACs. Rigs are often
+    flashed from one image (shared /etc/machine-id) and re-flashed later (new machine-id); the
+    hardware stays the same either way. machine-id is only the fallback when there is none."""
+    def text(relative):
+        try:
+            return (base / relative).read_text().strip()
+        except OSError:
+            return ""
+    macs = []
+    for nic in sorted((base / "sys/class/net").glob("*")):
+        if (nic / "device").exists() and not VIRTUAL_INTERFACES.match(nic.name):
+            address = text(str((nic / "address").relative_to(base)))
+            if address and address != "00:00:00:00:00:00":
+                macs.append(address)
+    parts = [text("sys/class/dmi/id/product_uuid"), *macs]
+    if not any(parts):
+        parts = ["machine-id", text("etc/machine-id") or text("var/lib/dbus/machine-id")]
+    if not any(parts[1:] if parts[0] == "machine-id" else parts):
+        raise RuntimeError("No machine identity found (board UUID, network card or /etc/machine-id)")
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()
+
+
+def enroll(panel, key):
+    panel = panel.rstrip("/")
+    if not re.fullmatch(r"https?://[^\s/]+", panel):
+        raise ValueError("Invalid controller address")
+    body = {"token": key.strip(), "fingerprint": machine_fingerprint(), "hostname": socket.gethostname(),
+            "addresses": [a["address"] for a in local_addresses()], "version": VERSION}
+    request = urllib.request.Request(f"{panel}/agent/v1/enroll", data=json.dumps(body).encode(), method="POST",
+                                     headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            reply = json.loads(response.read(65536))
+    except urllib.error.HTTPError as error:
+        try:
+            reason = json.loads(error.read(65536)).get("error", "")
+        except ValueError:
+            reason = ""
+        raise RuntimeError(f"主控拒绝加入（HTTP {error.code}）：{reason or '安装密钥无效、已撤销或已过期'}") from None
+    uuid.UUID(str(reply.get("machine_id")))
+    if not re.fullmatch(r"[a-f0-9]{64}", str(reply.get("key", ""))) or not re.fullmatch(r"wss?://\S+", str(reply.get("connect_url", ""))):
+        raise RuntimeError("主控返回的接入信息无效")
+    atomic(AGENT_FILE, {"panel": panel, "machine_id": reply["machine_id"], "key": reply["key"],
+                        "connect_url": reply["connect_url"], "name": reply.get("name")})
+    push = reply.get("push")
+    if isinstance(push, dict) and re.fullmatch(r"https?://\S+", str(push.get("url", ""))) \
+            and re.fullmatch(r"[a-f0-9]{64}", str(push.get("digest", ""))):
+        atomic(PUSH_FILE, {"url": push["url"], "machine_id": reply["machine_id"], "key": reply["key"], "digest": push["digest"]})
+    emit("info", "enrolled", f"已加入矿场：{reply.get('name')}（{panel}）")
+    return {"machine_id": reply["machine_id"], "name": reply.get("name"), "created": reply.get("created")}
+
+
+class WebSocket:
+    """Minimal RFC 6455 client on the standard library: text messages, ping/pong and close.
+    Only the thread running AgentSession.loop reads or writes the socket."""
+    GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+    def __init__(self, url, headers=None, timeout=15):
+        import ssl
+        import urllib.parse
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.scheme not in ("ws", "wss") or not parsed.hostname:
+            raise ValueError(f"Invalid WebSocket URL {url}")
+        port = parsed.port or (443 if parsed.scheme == "wss" else 80)
+        sock = socket.create_connection((parsed.hostname, port), timeout=timeout)
+        if parsed.scheme == "wss":
+            sock = ssl.create_default_context().wrap_socket(sock, server_hostname=parsed.hostname)
+        self.sock, self.buffer = sock, b""
+        key = base64.b64encode(os.urandom(16)).decode()
+        path = (parsed.path or "/") + (f"?{parsed.query}" if parsed.query else "")
+        host = parsed.hostname if ":" not in parsed.hostname else f"[{parsed.hostname}]"
+        if parsed.port:
+            host += f":{parsed.port}"
+        lines = [f"GET {path} HTTP/1.1", f"Host: {host}", "Upgrade: websocket", "Connection: Upgrade",
+                 f"Sec-WebSocket-Key: {key}", "Sec-WebSocket-Version: 13",
+                 *(f"{name}: {value}" for name, value in (headers or {}).items())]
+        sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
+        while b"\r\n\r\n" not in self.buffer:
+            chunk = sock.recv(4096)
+            if not chunk or len(self.buffer) > 65536:
+                raise ConnectionError("WebSocket handshake failed")
+            self.buffer += chunk
+        head, self.buffer = self.buffer.split(b"\r\n\r\n", 1)
+        status, *fields = head.decode(errors="replace").split("\r\n")
+        if " 101 " not in f"{status} ":
+            raise ConnectionError(f"WebSocket refused: {status}")
+        accept = {k.strip().lower(): v.strip() for k, _, v in (f.partition(":") for f in fields)}.get("sec-websocket-accept")
+        if accept != base64.b64encode(hashlib.sha1((key + self.GUID).encode()).digest()).decode():
+            raise ConnectionError("WebSocket handshake answer is wrong")
+
+    def fileno(self):
+        return self.sock.fileno()
+
+    def pending(self):
+        return bool(self.buffer) or (hasattr(self.sock, "pending") and self.sock.pending() > 0)
+
+    def _exact(self, size):
+        while len(self.buffer) < size:
+            chunk = self.sock.recv(max(65536, size - len(self.buffer)))
+            if not chunk:
+                raise ConnectionError("Connection closed")
+            self.buffer += chunk
+        data, self.buffer = self.buffer[:size], self.buffer[size:]
+        return data
+
+    def send_frame(self, opcode, payload=b""):
+        length = len(payload)
+        header = bytes([0x80 | opcode])
+        if length < 126:
+            header += bytes([0x80 | length])
+        elif length < 65536:
+            header += bytes([0x80 | 126]) + length.to_bytes(2, "big")
+        else:
+            header += bytes([0x80 | 127]) + length.to_bytes(8, "big")
+        mask = os.urandom(4)
+        if length:
+            # Mask with one big-integer XOR instead of a per-byte Python loop.
+            pad = (mask * (length // 4 + 1))[:length]
+            payload = (int.from_bytes(payload, "big") ^ int.from_bytes(pad, "big")).to_bytes(length, "big")
+        self.sock.sendall(header + mask + payload)
+
+    def send_text(self, text):
+        self.send_frame(0x1, text.encode())
+
+    def receive(self):
+        """The next text message, or None after handling a control frame."""
+        message, first = b"", None
+        while True:
+            head = self._exact(2)
+            fin, opcode, masked, length = head[0] & 0x80, head[0] & 0x0F, head[1] & 0x80, head[1] & 0x7F
+            if length == 126:
+                length = int.from_bytes(self._exact(2), "big")
+            elif length == 127:
+                length = int.from_bytes(self._exact(8), "big")
+            if length > 64 * 1024 * 1024:
+                raise ConnectionError("Message too large")
+            mask = self._exact(4) if masked else None
+            payload = self._exact(length)
+            if mask:
+                pad = (mask * (length // 4 + 1))[:length]
+                payload = (int.from_bytes(payload, "big") ^ int.from_bytes(pad, "big")).to_bytes(length, "big")
+            if opcode == 0x8:
+                raise ConnectionError("Closed by controller")
+            if opcode == 0x9:
+                self.send_frame(0xA, payload)
+                return None
+            if opcode == 0xA:
+                return None
+            if opcode in (0x1, 0x2):
+                first = opcode
+            message += payload
+            if fin:
+                return message.decode(errors="replace") if first == 0x1 else None
+
+    def close(self):
+        with contextlib.suppress(OSError):
+            self.send_frame(0x8, (1000).to_bytes(2, "big"))
+        with contextlib.suppress(OSError):
+            self.sock.close()
+
+
+def agent_environment():
+    env = dict(os.environ)
+    env.setdefault("HOME", "/root")
+    env.setdefault("LANG", "C.UTF-8")
+    env.setdefault("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+    return env
+
+
+def agent_exec(command, stdin=b"", timeout=60):
+    """Run like an SSH exec: /bin/sh -c as root, bounded output, the whole process group killed
+    on timeout."""
+    import select
+    process = subprocess.Popen(["/bin/sh", "-c", command], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, start_new_session=True, env=agent_environment())
+
+    def feed():
+        with contextlib.suppress(OSError):
+            process.stdin.write(stdin)
+        with contextlib.suppress(OSError):
+            process.stdin.close()
+    threading.Thread(target=feed, daemon=True).start()
+    out_fd, err_fd = process.stdout.fileno(), process.stderr.fileno()
+    limits = {out_fd: AGENT_STDOUT_LIMIT, err_fd: AGENT_STDERR_LIMIT}
+    output = {fd: bytearray() for fd in limits}
+    truncated, deadline, open_fds = False, time.monotonic() + timeout, list(limits)
+
+    def kill():
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+        return {"timed_out": True}
+    try:
+        while open_fds:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return kill()
+            for fd in select.select(open_fds, [], [], min(left, 1))[0]:
+                chunk = os.read(fd, 65536)
+                if not chunk:
+                    open_fds.remove(fd)
+                    continue
+                room = limits[fd] - len(output[fd])
+                output[fd] += chunk[:max(room, 0)]
+                truncated |= len(chunk) > room
+        try:
+            code = process.wait(timeout=max(1, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            return kill()
+    finally:
+        process.stdout.close()
+        process.stderr.close()
+    return {"exit_code": code if code >= 0 else 128 - code, "truncated": truncated,
+            "stdout": base64.b64encode(bytes(output[out_fd])).decode(),
+            "stderr": base64.b64encode(bytes(output[err_fd])).decode()}
+
+
+def agent_upload(path, mode, data):
+    path = Path(path)
+    if not path.is_absolute():
+        raise ValueError("Upload path must be absolute")
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+        temp = handle.name
+    os.chmod(temp, int(mode) & 0o7777)
+    os.replace(temp, path)
+
+
+class AgentTerminal:
+    """A shell (or the given command) on a new pseudo-terminal, streamed to the controller."""
+
+    def __init__(self, session, ident, command, cols, rows):
+        self.session, self.ident = session, ident
+        self.master, slave = os.openpty()
+        self.resize(cols, rows)
+        argv = ["/bin/sh", "-c", command] if command else ([shutil.which("bash") or "/bin/sh", "-l"])
+        env = {**agent_environment(), "TERM": "xterm-256color"}
+        # setsid -c: own session with the pty as controlling terminal, so job control and screen work.
+        self.process = subprocess.Popen(["setsid", "-c", *argv], stdin=slave, stdout=slave, stderr=slave,
+                                        env=env, cwd=env["HOME"] if os.path.isdir(env["HOME"]) else "/", close_fds=True)
+        os.close(slave)
+        threading.Thread(target=self.pump, daemon=True).start()
+
+    def resize(self, cols, rows):
+        import termios
+        size = struct_winsize(int(rows), int(cols))
+        with contextlib.suppress(OSError):
+            fcntl.ioctl(self.master, termios.TIOCSWINSZ, size)
+
+    def write(self, data):
+        with contextlib.suppress(OSError):
+            os.write(self.master, data)
+
+    def pump(self):
+        while True:
+            try:
+                data = os.read(self.master, 65536)
+            except OSError:
+                break
+            if not data:
+                break
+            self.session.post({"type": "term_data", "id": self.ident, "data": base64.b64encode(data).decode()})
+        code = self.process.wait()
+        with contextlib.suppress(OSError):
+            os.close(self.master)
+        self.session.terminals.pop(self.ident, None)
+        self.session.post({"type": "term_exit", "id": self.ident, "code": code if code >= 0 else 128 - code})
+
+    def close(self):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(self.process.pid, signal.SIGHUP)
+
+        def kill_later():
+            time.sleep(3)
+            if self.process.poll() is None:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(self.process.pid, signal.SIGKILL)
+        threading.Thread(target=kill_later, daemon=True).start()
+
+
+def struct_winsize(rows, cols):
+    import struct
+    return struct.pack("HHHH", max(1, min(rows, 200)), max(1, min(cols, 500)), 0, 0)
+
+
+class AgentRejected(Exception):
+    """The controller refused this machine (unknown key, deleted machine)."""
+
+
+class AgentSession:
+    """One authenticated connection. Workers hand replies to `post`; only `loop` touches the socket."""
+    SILENCE = 90
+
+    def __init__(self, ws):
+        self.ws, self.outgoing, self.terminals = ws, queue.Queue(), {}
+        self.wake_read, self.wake_write = os.pipe()
+        os.set_blocking(self.wake_read, False)
+        os.set_blocking(self.wake_write, False)
+
+    def post(self, message):
+        self.outgoing.put(message)
+        with contextlib.suppress(BlockingIOError, OSError):
+            os.write(self.wake_write, b"x")
+
+    def work(self, ident, task):
+        def run():
+            try:
+                reply = task()
+            except Exception as error:  # noqa: BLE001 - every failure goes back to the controller
+                reply = {"error": str(error)[:2000] or type(error).__name__}
+            self.post({"type": "result", "id": ident, **reply})
+        threading.Thread(target=run, daemon=True).start()
+
+    def handle(self, message):
+        kind, ident = message.get("type"), message.get("id")
+        if kind == "exec":
+            self.work(ident, lambda: agent_exec(str(message.get("command", "")), base64.b64decode(message.get("stdin") or ""),
+                                                max(1, min(int(message.get("timeout") or 60), 86400))))
+        elif kind == "upload":
+            self.work(ident, lambda: agent_upload(message["path"], message.get("mode", 0o600), base64.b64decode(message.get("data") or "")) or {"ok": True})
+        elif kind == "term_open":
+            try:
+                self.terminals[ident] = AgentTerminal(self, ident, message.get("command"), message.get("cols", 120), message.get("rows", 32))
+            except Exception as error:  # noqa: BLE001
+                self.post({"type": "term_data", "id": ident, "data": base64.b64encode(f"终端无法打开：{error}\r\n".encode()).decode()})
+                self.post({"type": "term_exit", "id": ident, "code": 1})
+        elif kind == "term_input" and ident in self.terminals:
+            self.terminals[ident].write(base64.b64decode(message.get("data") or ""))
+        elif kind == "term_resize" and ident in self.terminals:
+            self.terminals[ident].resize(message.get("cols", 120), message.get("rows", 32))
+        elif kind == "term_close" and ident in self.terminals:
+            self.terminals[ident].close()
+
+    def loop(self):
+        import select
+        heard = time.monotonic()
+        try:
+            while True:
+                while True:
+                    try:
+                        message = self.outgoing.get_nowait()
+                    except queue.Empty:
+                        break
+                    self.ws.send_text(json.dumps(message, separators=(",", ":")))
+                ready = [self.ws] if self.ws.pending() else select.select([self.ws, self.wake_read], [], [], 10)[0]
+                if self.wake_read in ready:
+                    with contextlib.suppress(BlockingIOError):
+                        os.read(self.wake_read, 4096)
+                if self.ws in ready:
+                    text = self.ws.receive()
+                    heard = time.monotonic()
+                    if text is not None:
+                        self.handle(json.loads(text))
+                if time.monotonic() - heard > self.SILENCE:
+                    raise ConnectionError("Controller silent")
+        finally:
+            for terminal in list(self.terminals.values()):
+                terminal.close()
+            for fd in (self.wake_read, self.wake_write):
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+
+
+def agent_connect(config):
+    """Open and authenticate one connection. Returns the session, ready to loop."""
+    ws = WebSocket(config["connect_url"], headers={"X-Rig-Machine": config["machine_id"], "User-Agent": f"rigdeck-agent/{VERSION}"})
+    ws.sock.settimeout(30)
+    try:
+        challenge = None
+        while challenge is None:
+            challenge = ws.receive()
+        challenge = json.loads(challenge)
+        if challenge.get("type") != "challenge":
+            raise ConnectionError(challenge.get("error") or "Unexpected greeting")
+        nonce = str(challenge.get("nonce", ""))
+        mac = hmac.new(bytes.fromhex(config["key"]), f"rigdeck-agent/v1|{config['machine_id']}|{nonce}".encode(), hashlib.sha256).hexdigest()
+        ws.send_text(json.dumps({"type": "auth", "machine": config["machine_id"], "mac": mac, "version": VERSION,
+                                 "hostname": socket.gethostname(), "addresses": [a["address"] for a in local_addresses()]}))
+        answer = None
+        while answer is None:
+            answer = ws.receive()
+        answer = json.loads(answer)
+        if answer.get("type") != "ready":
+            raise AgentRejected(answer.get("error") or "Rejected by controller")
+    except Exception:
+        ws.close()
+        raise
+    return AgentSession(ws)
+
+
+def agent_main():
+    config = read(AGENT_FILE)
+    if not config.get("connect_url"):
+        raise RuntimeError("This machine has not joined a farm: run the install command from the panel")
+    delay = 1
+    while True:
+        started = time.monotonic()
+        try:
+            session = agent_connect(config)
+            print(f"agent connected to {config['connect_url']}", file=sys.stderr, flush=True)
+            delay = 1
+            session.loop()
+        except AgentRejected as error:
+            # Unknown key or deleted machine: keep trying, but slowly.
+            print(f"agent rejected: {error}", file=sys.stderr, flush=True)
+            delay = 300
+        except Exception as error:  # noqa: BLE001 - reconnect whatever happened
+            print(f"agent disconnected: {error}", file=sys.stderr, flush=True)
+        if time.monotonic() - started > 60 and delay < 300:
+            delay = 1
+        time.sleep(delay + delay * 0.2 * (os.urandom(1)[0] / 255))
+        if delay < 300:
+            delay = min(delay * 2, 60)
+
+
 def log_tail(name, lines=200):
     lines = max(1, min(int(lines), 2000))
     path = instance(name) / "console.log"
@@ -2208,6 +2637,15 @@ def main():
             raise ValueError("Invalid reader account")
         atomic(ROOT / "reader.json", {"user": params[0]})
         print(json.dumps({"reader": params[0]}))
+    elif cmd == "enroll":
+        try:
+            result = enroll(params[0], params[1])
+        except (OSError, ValueError, RuntimeError) as error:
+            print(str(error), file=sys.stderr)
+            sys.exit(1)
+        print(f"本机已登记为「{result['name']}」（{result['machine_id']}）")
+    elif cmd == "agent":
+        agent_main()
     elif cmd == "set-push":
         print(json.dumps(set_push(params[0])))
     elif cmd == "events":

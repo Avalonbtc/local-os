@@ -12,7 +12,7 @@ function mockApi(page: import("@playwright/test").Page, calls: any[], templates:
     const path = new URL(request.url()).pathname;
     let response: any = [];
     if (path.endsWith("/me")) response = { actor: { id, name: "fixture", token_id: null }, csrf: "fixture-csrf", expires_at: "2099-01-01" };
-    if (path.endsWith("/machines")) response = [{ id, name: "rig-3070ti", host: "10.0.0.9", port: 22, username: "root", tags: [], group: "", is_controller: false, bmc: null, policy: {}, created_at: "2026-01-01T00:00:00Z" }];
+    if (path.endsWith("/machines")) response = [{ id, name: "rig-3070ti", host: "10.0.0.9", port: 22, username: "root", tags: [], group: "", is_controller: false, policy: {}, created_at: "2026-01-01T00:00:00Z" }];
     if (path.endsWith("/telemetry")) response = [{ machine_id: id, kind: "system", observed_at: new Date().toISOString(), error: null,
       data: { gpus, gpu_drivers: { NVIDIA: "580.95" }, gpu_oc: { profile_name: "eth", applied_at: Date.now() / 1000, config: { nvidia: { clock: [1500], mem: [2400] } },
         results: [{ vendor: "NVIDIA", index: 0, bus_id: "0000:01:00.0", applied: ["锁定核心 1500 MHz", "显存偏移 +2400"], errors: [] }] } } }];

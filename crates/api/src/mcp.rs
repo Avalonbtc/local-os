@@ -61,11 +61,6 @@ pub struct MinerLogRequest {
     pub instance: String,
     pub lines: Option<u32>,
 }
-#[derive(Deserialize, JsonSchema)]
-pub struct BmcRead {
-    pub machine_id: Uuid,
-    pub kind: String,
-}
 
 fn response<T: Serialize>(
     result: rig_domain::Result<T>,
@@ -162,7 +157,7 @@ impl RigMcp {
         )
     }
     #[tool(
-        description = "Execute an authorized batch action: bootstrap, apply flight sheet, miner start/stop/restart, shell command, or BMC power. Requires idempotency_key. Returns job_id; poll job_get for individual outcomes. Unknown results must be reconciled, never blindly replayed."
+        description = "Execute an authorized batch action: bootstrap, apply flight sheet, miner start/stop/restart, or shell command. Requires idempotency_key. Returns job_id; poll job_get for individual outcomes. Unknown results must be reconciled, never blindly replayed."
     )]
     async fn job_submit(
         &self,
@@ -231,22 +226,10 @@ impl RigMcp {
         )
     }
     #[tool(
-        description = "Query BMC power, sensors or hardware events. Missing readings are not zero."
+        description = "Machines whose rigdeck-agent is connected right now, with agent version and address."
     )]
-    async fn bmc_read(
-        &self,
-        Parameters(p): Parameters<BmcRead>,
-    ) -> std::result::Result<CallToolResult, ErrorData> {
-        response(self.app.bmc_read(p.machine_id, &p.kind).await)
-    }
-    #[tool(
-        description = "Read cached BIOS settings and pending changes for one machine. Refresh via bios_read job; modify via bios_write job with revision and changes. No automatic reboot."
-    )]
-    async fn bios_read(
-        &self,
-        Parameters(p): Parameters<ById>,
-    ) -> std::result::Result<CallToolResult, ErrorData> {
-        response(self.app.bios_cached(p.id).await)
+    async fn agents_list(&self) -> std::result::Result<CallToolResult, ErrorData> {
+        response(Ok(self.app.agent_statuses()))
     }
     #[tool(
         description = "List versioned miner form schemas and runtime compatibility capabilities."
@@ -258,7 +241,7 @@ impl RigMcp {
 #[tool_handler]
 impl ServerHandler for RigMcp {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo{instructions:Some("RigDeck manages user-owned servers. All writes share REST authorization, immutable snapshots, audit and persistent queue. Do not replay unknown SSH or power outcomes. Aggregate hashrate separately by algorithm.".into()),capabilities:ServerCapabilities::builder().enable_tools().build(),..Default::default()}
+        ServerInfo{instructions:Some("RigDeck manages user-owned servers. All writes share REST authorization, immutable snapshots, audit and persistent queue. Do not replay unknown outcomes; reconcile them. Aggregate hashrate separately by algorithm.".into()),capabilities:ServerCapabilities::builder().enable_tools().build(),..Default::default()}
     }
 }
 pub fn service(app: App) -> StreamableHttpService<RigMcp, LocalSessionManager> {

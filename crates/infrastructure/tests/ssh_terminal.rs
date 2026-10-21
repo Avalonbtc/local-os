@@ -12,7 +12,7 @@ async fn password_sudo_terminal_does_not_leak_secret_and_stream_upload_works() {
     let machine: Machine = serde_json::from_value(serde_json::json!({
         "id":Uuid::new_v4(),"name":"fixture","host":"127.0.0.1","port":22239,
         "username":"fixture","host_key":key.fingerprint,"group":"test","tags":[],
-        "is_controller":false,"bmc":null,"policy":{},"created_at":chrono::Utc::now()
+        "is_controller":false,"policy":{},"created_at":chrono::Utc::now()
     }))
     .unwrap();
     let credential = Credential::Password {

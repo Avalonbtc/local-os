@@ -6,7 +6,7 @@ use uuid::Uuid;
 impl FleetRepository for PgStore {
     async fn machines(&self) -> Result<Vec<Machine>> {
         sqlx::query_scalar::<_, Value>(
-            "SELECT to_jsonb(m)-'ssh_secret'-'bmc_secret' FROM machines m WHERE deleted_at IS NULL ORDER BY name",
+            "SELECT to_jsonb(m)-'ssh_secret'-'fingerprint' FROM machines m WHERE deleted_at IS NULL ORDER BY name",
         )
         .fetch_all(&self.pool)
         .await
@@ -18,7 +18,7 @@ impl FleetRepository for PgStore {
     async fn machine(&self, id: Uuid) -> Result<Machine> {
         decode(
             sqlx::query_scalar::<_, Value>(
-                "SELECT to_jsonb(m)-'ssh_secret'-'bmc_secret' FROM machines m WHERE id=$1 AND deleted_at IS NULL",
+                "SELECT to_jsonb(m)-'ssh_secret'-'fingerprint' FROM machines m WHERE id=$1 AND deleted_at IS NULL",
             )
             .bind(id)
             .fetch_one(&self.pool)
@@ -31,7 +31,6 @@ impl FleetRepository for PgStore {
         id: Uuid,
         i: &MachineInput,
         ssh: Option<&str>,
-        bmc: Option<&str>,
         actor: &Actor,
     ) -> Result<Machine> {
         let mut tx = self.pool.begin().await.map_err(db)?;
@@ -56,8 +55,10 @@ impl FleetRepository for PgStore {
                 return Err(Error::Validation("新机器需要 SSH 凭据".into()));
             }
         }
-        sqlx::query("INSERT INTO machines(id,name,host,port,username,host_key,\"group\",tags,is_controller,bmc,policy,ssh_secret,bmc_secret) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12,''),$13) ON CONFLICT(id) DO UPDATE SET name=excluded.name,host=excluded.host,port=excluded.port,username=excluded.username,host_key=excluded.host_key,\"group\"=excluded.\"group\",tags=excluded.tags,is_controller=excluded.is_controller,bmc=excluded.bmc,policy=excluded.policy,ssh_secret=COALESCE($12,machines.ssh_secret),bmc_secret=COALESCE($13,machines.bmc_secret)")
-        .bind(id).bind(&i.name).bind(&i.host).bind(i.port as i32).bind(&i.username).bind(&i.host_key).bind(&i.group).bind(json!(i.tags)).bind(i.is_controller).bind(i.bmc.as_ref().map(|v|json!(v))).bind(&i.policy).bind(ssh).bind(bmc).execute(&mut *tx).await.map_err(db)?;
+        // An agent machine keeps the connection details its rig reported; only the descriptive
+        // fields are edited.
+        sqlx::query("INSERT INTO machines(id,name,host,port,username,host_key,\"group\",tags,is_controller,policy,ssh_secret) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11,'')) ON CONFLICT(id) DO UPDATE SET name=excluded.name,\"group\"=excluded.\"group\",tags=excluded.tags,is_controller=excluded.is_controller,policy=excluded.policy,host=CASE WHEN machines.transport='agent' THEN machines.host ELSE excluded.host END,port=CASE WHEN machines.transport='agent' THEN machines.port ELSE excluded.port END,username=CASE WHEN machines.transport='agent' THEN machines.username ELSE excluded.username END,host_key=CASE WHEN machines.transport='agent' THEN machines.host_key ELSE excluded.host_key END,ssh_secret=CASE WHEN machines.transport='agent' THEN machines.ssh_secret ELSE COALESCE($11,machines.ssh_secret) END")
+        .bind(id).bind(&i.name).bind(&i.host).bind(i.port as i32).bind(&i.username).bind(&i.host_key).bind(&i.group).bind(json!(i.tags)).bind(i.is_controller).bind(&i.policy).bind(ssh).execute(&mut *tx).await.map_err(db)?;
         audit_tx(
             &mut tx,
             actor,
@@ -69,19 +70,16 @@ impl FleetRepository for PgStore {
         tx.commit().await.map_err(db)?;
         self.machine(id).await
     }
-    async fn machine_secret(&self, id: Uuid, bmc: bool) -> Result<String> {
-        let query = if bmc {
-            "SELECT bmc_secret FROM machines WHERE id=$1 AND deleted_at IS NULL"
-        } else {
-            "SELECT ssh_secret FROM machines WHERE id=$1 AND deleted_at IS NULL"
-        };
-        sqlx::query_scalar::<_, Option<String>>(query)
-            .bind(id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(db)?
-            .filter(|v| !v.is_empty())
-            .ok_or_else(|| Error::Validation("机器缺少凭据".into()))
+    async fn machine_secret(&self, id: Uuid) -> Result<String> {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT ssh_secret FROM machines WHERE id=$1 AND deleted_at IS NULL",
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db)?
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| Error::Validation("机器缺少凭据".into()))
     }
     async fn delete_machine(&self, id: Uuid, actor: &Actor) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(db)?;

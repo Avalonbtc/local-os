@@ -41,8 +41,6 @@ const page = <K extends string>(load: () => Promise<Record<K, React.ComponentTyp
   lazy(() => load().then((module) => ({ default: module[name] })));
 const WalletsPage = page(() => import("./features/wallets"), "WalletsPage");
 const FlightsPage = page(() => import("./features/flight_sheets"), "FlightsPage");
-const BmcPage = page(() => import("./features/bmc"), "BmcPage");
-const BiosPage = page(() => import("./features/bios"), "BiosPage");
 const OverclockPage = page(() => import("./features/overclock"), "OverclockPage");
 const SettingsPage = page(() => import("./features/settings"), "SettingsPage");
 const TerminalsPage = page(() => import("./features/terminal"), "TerminalsPage");
@@ -58,8 +56,6 @@ const farmTabs = [
   ["/wallets", "钱包"],
   ["/flight-sheets", "飞行表"],
   ["/overclocking", "超频"],
-  ["/bmc", "BMC 设备"],
-  ["/bios", "BIOS"],
   ["/terminals", "多机终端"],
   ["/settings", "设定"],
 ] as const;
@@ -232,14 +228,11 @@ function Root() {
           <Route path="/machines/:id" element={<MachineDetail />} />
           <Route path="/wallets" element={<WalletsPage />} />
           <Route path="/flight-sheets" element={<FlightsPage />} />
-          <Route path="/bmc" element={<BmcPage />} />
           <Route path="/overclocking" element={<OverclockPage />} />
-          <Route path="/bios" element={<BiosPage />} />
-          <Route path="/bios/:id" element={<BiosPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/terminals" element={<TerminalsPage />} />
           {/* Old bookmarks: these pages no longer exist. */}
-          {["/jobs", "/coins", "/pools", "/miners"].map((path) => (
+          {["/jobs", "/coins", "/pools", "/miners", "/bmc", "/bios"].map((path) => (
             <Route key={path} path={path} element={<Navigate replace to="/machines" />} />
           ))}
           <Route

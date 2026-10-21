@@ -25,7 +25,6 @@ test("production static assets, CSP, secure session and navigation", async ({
   for (const [label, heading] of [
     ["钱包", "钱包"],
     ["飞行表", "添加新的飞行表"],
-    ["BMC 设备", "BMC"],
     ["设定", "设置"],
   ]) {
     await page.locator("nav.rd-tabs").getByText(label, { exact: true }).click();

@@ -138,6 +138,12 @@ impl App {
         input: MachineInput,
     ) -> Result<Machine> {
         valid_name(&input.name)?;
+        if let Ok(existing) = self.repository.machine(id).await
+            && existing.is_agent()
+        {
+            // Connection details come from the rig itself; the stored row keeps them.
+            return self.repository.save_machine(id, &input, None, actor).await;
+        }
         validate_ssh_endpoint(&input.host, input.port)?;
         if !input.host_key.starts_with("SHA256:") || input.host_key.len() < 40 {
             return Err(Error::Validation(
@@ -160,20 +166,10 @@ impl App {
         }) {
             return Err(Error::Validation("sudo 密码格式无效".into()));
         }
-        if let Some(bmc) = &input.bmc {
-            if !self.bmc.contains_key(&bmc.provider) {
-                return Err(Error::Validation("未知 BMC Provider".into()));
-            }
-            if bmc.provider == "redfish" && !bmc.url.starts_with("https://") {
-                return Err(Error::Validation(
-                    "Redfish 使用 HTTPS；自签证书请填写 CA PEM".into(),
-                ));
-            }
-        }
         let mut ssh_credential = if let Some(credential) = input.credential.clone() {
             Some(credential)
         } else if input.sudo_password.is_some() {
-            Some(self.credential(id, false).await?)
+            Some(self.credential(id).await?)
         } else {
             None
         };
@@ -182,7 +178,7 @@ impl App {
                 credential.set_sudo_password(Some(password.clone()));
             } else if input.credential.is_some() {
                 // Replacing SSH credentials should not silently discard a saved sudo password.
-                if let Ok(existing) = self.credential(id, false).await
+                if let Ok(existing) = self.credential(id).await
                     && let Some(password) = existing.explicit_sudo_password()
                 {
                     credential.set_sudo_password(Some(password.to_owned()));
@@ -193,18 +189,13 @@ impl App {
             .as_ref()
             .map(|c| self.vault.encrypt(c))
             .transpose()?;
-        let bmc = input
-            .bmc_credential
-            .as_ref()
-            .map(|c| self.vault.encrypt(c))
-            .transpose()?;
         self.repository
-            .save_machine(id, &input, ssh.as_deref(), bmc.as_deref(), actor)
+            .save_machine(id, &input, ssh.as_deref(), actor)
             .await
     }
     pub async fn test_machine(&self, actor: &Actor, id: Uuid) -> Result<ExecOutput> {
         let machine = self.repository.machine(id).await?;
-        let credential = self.credential(id, false).await?;
+        let credential = self.credential(id).await?;
         self.repository
             .audit(
                 actor,
@@ -222,7 +213,7 @@ impl App {
                 20,
             )
             .await?;
-        if machine.username != "root" {
+        if machine.username != "root" && !machine.is_agent() {
             let mut sudo = self
                 .remote
                 .execute(&machine, &credential, "sudo -n true", 20)

@@ -26,7 +26,6 @@ import {
   SortAscendingOutlined,
   StarFilled,
   StarOutlined,
-  ThunderboltFilled,
   UnorderedListOutlined,
 } from "@ant-design/icons";
 import { Link, useNavigate } from "react-router-dom";
@@ -37,6 +36,7 @@ import {
   machinePower,
   MINER_FRESH_SECONDS,
   minerStatsFresh,
+  useAgents,
   useMachines,
   useRefresh,
   useFarmSettings,
@@ -47,6 +47,7 @@ import {
 import { hashrate, number, QueryState } from "../../shared/ui";
 import { BatchModal, MachineEditor } from "./controls";
 import { BatchAddModal } from "./import";
+import { EnrollModal } from "./enroll";
 import { CoinBadge, IconBolt, IconCpu, IconEmptyRigs, IconGpu, IconPickaxe, IconRig, IconServer, IconYuan } from "../../shared/icons";
 
 type Filter = "all" | "online" | "offline" | "problems" | "favorites";
@@ -78,8 +79,6 @@ type FleetRow = {
   powerW?: number;
   powerLabel: string;
   powerSource: string;
-  bmcOnline: boolean;
-  powerState?: string;
   instances: Record<string, any>[];
   hashrateHs: number;
 };
@@ -90,7 +89,6 @@ function model(
 ): FleetRow {
   const system = latest(observations, machine.id, "system");
   const mining = latest(observations, machine.id, "mining");
-  const power = latest(observations, machine.id, "power");
   const online = isFresh(system);
   const systemData = online ? data(system?.data) : {};
   const reportedInstances = data(mining?.data).instances;
@@ -106,7 +104,6 @@ function model(
   if (system?.error) issues.push(`采集失败：${system.error}`);
   else if (system && !online) issues.push("超过 35 秒没有新数据");
   if (mining?.error) issues.push(`矿工统计：${mining.error}`);
-  if (power?.error) issues.push(`BMC：${power.error}`);
   for (const instance of instances) {
     if (instance.phase === "faulted" || instance.phase === "failed")
       issues.push(`${instance.instance}：多次自动恢复失败，已停止重启`);
@@ -143,8 +140,6 @@ function model(
     powerW: machinePower(system).watts,
     powerLabel: machinePower(system).label,
     powerSource: machinePower(system).source,
-    bmcOnline: isFresh(power, 90),
-    powerState: isFresh(power, 90) ? data(power?.data).state : undefined,
     instances,
     hashrateHs: active.reduce(
       (sum, instance) =>
@@ -200,6 +195,7 @@ function coinOf(instance: Record<string, any>) {
 }
 
 export function FleetSummary() {
+  const agents = useAgents();
   const machines = useMachines();
   const telemetry = useFleetTelemetry();
   const price = useFarmSettings().data?.electricity_price;
@@ -301,13 +297,13 @@ export function FleetSummary() {
             </div>
           );
         })}
-        <div className="hive-stat">
+        <div className="hive-stat" title="通过安装命令加入、当前与面板保持连接的矿机">
           <div className="hive-stat-line">
-            <strong>{rows.filter((row) => row.bmcOnline).length}</strong>
-            <small>/{machines.data?.filter((machine) => !!machine.bmc).length ?? "—"}</small>
+            <strong>{agents.data?.length ?? "—"}</strong>
+            <small>/{machines.data?.filter((machine) => machine.transport === "agent").length ?? "—"}</small>
           </div>
           <span>
-            <IconServer size={13} />BMC 在线
+            <IconServer size={13} />主动连接
           </span>
         </div>
         <Link
@@ -477,6 +473,7 @@ export function FleetPage() {
   const [pageSize, setPageSize] = useState(250);
   const [page, setPage] = useState(1);
   const [editor, setEditor] = useState(false);
+  const [enrolling, setEnrolling] = useState(false);
   const [importing, setImporting] = useState(false);
   const [batch, setBatch] = useState("");
   const [help, setHelp] = useState(false);
@@ -632,12 +629,9 @@ export function FleetPage() {
             className="hive-add-machine"
             type="primary"
             icon={<PlusOutlined />}
-            onClick={() => setEditor(true)}
+            onClick={() => setEnrolling(true)}
           >
             添加矿机
-          </Button>
-          <Button className="hive-add-machine" onClick={() => setImporting(true)}>
-            批量添加
           </Button>
           <Button
             className="hive-show-filters"
@@ -737,7 +731,7 @@ export function FleetPage() {
           <Button icon={<ReloadOutlined />} onClick={() => refresh()}>
             刷新
           </Button>
-          <Button icon={<PlusOutlined />} onClick={() => setEditor(true)}>
+          <Button icon={<PlusOutlined />} onClick={() => setEnrolling(true)}>
             添加机器
           </Button>
         </div>
@@ -794,11 +788,6 @@ export function FleetPage() {
                   label: "部署 / 更新运行层",
                   icon: <SettingOutlined />,
                 },
-                {
-                  key: "power",
-                  label: "BMC 电源操作",
-                  icon: <ThunderboltFilled />,
-                },
               ],
               onClick: ({ key }) => setBatch(key),
             }}
@@ -833,10 +822,9 @@ export function FleetPage() {
             />
             {!machines.data?.length && (
               <Space>
-                <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditor(true)}>
-                  添加第一台矿机（可配置 BMC）
+                <Button type="primary" icon={<PlusOutlined />} onClick={() => setEnrolling(true)}>
+                  添加第一台矿机
                 </Button>
-                <Button onClick={() => setImporting(true)}>按 IP 段批量添加</Button>
               </Space>
             )}
           </div>
@@ -939,7 +927,6 @@ export function FleetPage() {
                   {row.powerW === undefined
                     ? "—"
                     : `${number(row.powerW, 0)} W`}
-                  {row.powerState === "Off" && <span className="hive-power-state">已关机</span>}
                 </div>
               </div>
             ))}
@@ -967,6 +954,18 @@ export function FleetPage() {
           </Button>
         </div>
       )}
+      <EnrollModal
+        open={enrolling}
+        onClose={() => setEnrolling(false)}
+        onSsh={() => {
+          setEnrolling(false);
+          setEditor(true);
+        }}
+        onSshBatch={() => {
+          setEnrolling(false);
+          setImporting(true);
+        }}
+      />
       <MachineEditor open={editor} onClose={() => setEditor(false)} />
       <BatchAddModal open={importing} onClose={() => setImporting(false)} />
       {batch && (

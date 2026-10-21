@@ -14,7 +14,7 @@ test("fleet row shows CPU and GPU coins separately with GPU tiles", async ({ pag
     const path = new URL(route.request().url()).pathname;
     let body: unknown = [];
     if (path.endsWith("/me")) body = { actor: { id, name: "fixture", token_id: null }, csrf: "test", expires_at: "2099-01-01" };
-    if (path.endsWith("/machines")) body = [{ id, name: "mixed-1", host: "10.0.0.9", tags: [], policy: {}, bmc: null, group: "" }];
+    if (path.endsWith("/machines")) body = [{ id, name: "mixed-1", host: "10.0.0.9", tags: [], policy: {}, group: "" }];
     if (path.includes("telemetry"))
       body = [
         { machine_id: id, kind: "system", observed_at: now, error: null, data: {

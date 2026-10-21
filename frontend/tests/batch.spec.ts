@@ -5,7 +5,6 @@ const machines = Array.from({ length: 12 }, (_, n) => ({
   name: `batch-${String(n + 1).padStart(2, "0")}`,
   host: `10.0.0.${n + 1}`,
   tags: [], policy: {}, group: "", is_controller: false,
-  bmc: { provider: "ipmi", url: `10.0.1.${n + 1}`, username: "ADMIN" },
 }));
 
 for (const [kind, button] of [
@@ -13,7 +12,6 @@ for (const [kind, button] of [
   ["miner", "矿工控制"],
   ["apply", "应用飞行表"],
   ["bootstrap", "部署 / 更新运行层"],
-  ["power", "BMC 电源操作"],
 ]) {
   test(`${kind} sends every selected machine without concurrency or canary controls`, async ({ page }) => {
     const requests: any[] = [];
@@ -35,7 +33,7 @@ for (const [kind, button] of [
     await page.getByRole("checkbox", { name: "选择本页所有矿机" }).check();
     // The command case also proves that an unchecked machine is excluded.
     if (kind === "command") await page.getByRole("checkbox", { name: "选择 batch-02", exact: true }).uncheck();
-    if (kind === "bootstrap" || kind === "power") {
+    if (kind === "bootstrap") {
       await page.getByRole("button", { name: /更多/ }).hover();
       await page.getByRole("menuitem", { name: button }).click();
     } else {

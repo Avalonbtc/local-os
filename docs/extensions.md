@@ -48,12 +48,6 @@ start 用已部署版本启动；stop 持久化停止意图，watchdog 和开机
 
 需要原生适配器时，实现 `domain::MinerAdapter` 的 describe/render，在 `infrastructure::adapters::registry()` 注册。参数描述含 schema_version 和 JSON Schema，前端动态生成表单。统计解析目前位于 Python 运行层 normalize，新增适配器需同步添加采集/归一化分支与契约测试；它不涉及任务队列的条件分支。Rust 原生适配器和目标机统计插件分属两个执行环境，不能只增加 render 而遗漏运行层解析。
 
-## 新增 BMC Provider 示例
-
-例如给一个兼容标准 Redfish 的品牌注册独立标识：定义 `struct VendorBmc;`，实现 `BmcProvider`，id 返回新标识，read/power 委托 `bmc::Redfish`；在 registry 注册 `Arc::new(VendorBmc)`。如果厂商在 OEM 路径提供功耗，仅在这个 Provider 中扩展 read("sensors") 并归一化 name/reading/unit/health，保留原始数据。加入 `tests/redfish/run.py` 类似的 TLS fixture 验证路径与重置语义，然后接真实 BMC。
-
-通用 Redfish 要求一个 ComputerSystem，支持 Sensors 集合、传统 Thermal/Power、ComputerSystem.LogServices；不自动探测所有 OEM 路径。IPMI 是显式选择的 lanplus Provider，不会在 Redfish 电源操作结果不明时自动改用 IPMI 重发。多系统机箱、Manager 专属事件和厂商私有传感器需扩展 Provider。
-
 ## 新页面与新任务类型
 
 页面示例：在 `features/inventory/index.tsx` 导出 `InventoryPage`，调用 shared/api 的 useMachines/useTelemetry，使用 QueryState 包裹 Table，然后在路由和导航注册。只能从其他 feature 的公开 index 导入。若需要新数据，在应用服务增加方法、HTTP/OpenAPI 注册、生成 TS 客户端后调用，不能直接在前端定义第二套请求模型。

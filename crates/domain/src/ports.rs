@@ -4,19 +4,6 @@ use serde_json::Value;
 use uuid::Uuid;
 
 #[async_trait]
-pub trait BiosProvider: Send + Sync {
-    async fn cached(&self, machine: Uuid) -> Result<Value>;
-    async fn execute(
-        &self,
-        machine: &Machine,
-        credential: &Credential,
-        operation: Uuid,
-        action: &Value,
-        reconcile: bool,
-    ) -> Result<RemoteOperation>;
-}
-
-#[async_trait]
 pub trait IdentityRepository: Send + Sync {
     async fn create_admin(&self, name: &str, password_hash: &str) -> Result<()>;
     async fn password_hash(&self, name: &str) -> Result<Option<(Uuid, String)>>;
@@ -38,11 +25,29 @@ pub trait FleetRepository: Send + Sync {
         id: Uuid,
         input: &MachineInput,
         ssh_secret: Option<&str>,
-        bmc_secret: Option<&str>,
         actor: &Actor,
     ) -> Result<Machine>;
-    async fn machine_secret(&self, id: Uuid, bmc: bool) -> Result<String>;
+    async fn machine_secret(&self, id: Uuid) -> Result<String>;
     async fn delete_machine(&self, id: Uuid, actor: &Actor) -> Result<()>;
+}
+#[async_trait]
+pub trait EnrollmentRepository: Send + Sync {
+    async fn enrollment_tokens(&self) -> Result<Vec<EnrollmentToken>>;
+    async fn enrollment_token(&self, id: Uuid) -> Result<EnrollmentToken>;
+    async fn create_enrollment_token(
+        &self,
+        id: Uuid,
+        input: &EnrollmentTokenInput,
+        actor: &Actor,
+    ) -> Result<EnrollmentToken>;
+    async fn revoke_enrollment_token(&self, id: Uuid, actor: &Actor) -> Result<()>;
+    /// In one transaction: check the token is usable and count one use, then return the live
+    /// machine with this fingerprint or create it. `true` when the machine is new.
+    async fn enroll_machine(
+        &self,
+        token: Uuid,
+        machine: &NewAgentMachine,
+    ) -> Result<(Machine, bool)>;
 }
 #[async_trait]
 pub trait CatalogRepository: Send + Sync {
@@ -151,6 +156,7 @@ pub trait SettingsRepository: Send + Sync {
 pub trait Repository:
     IdentityRepository
     + FleetRepository
+    + EnrollmentRepository
     + CatalogRepository
     + FlightRepository
     + JobRepository
@@ -162,6 +168,7 @@ pub trait Repository:
 impl<T> Repository for T where
     T: IdentityRepository
         + FleetRepository
+        + EnrollmentRepository
         + CatalogRepository
         + FlightRepository
         + JobRepository
@@ -180,6 +187,10 @@ pub trait SecretVault: Send + Sync {
     /// Per-machine telemetry push key (64 hex), derived from the master key so nothing extra is
     /// stored. `None` when this vault cannot derive keys.
     fn push_key(&self, _machine: Uuid) -> Option<String> {
+        None
+    }
+    /// A 64-hex value derived from the master key for `label`; `None` when unsupported.
+    fn derive(&self, _label: &str) -> Option<String> {
         None
     }
 }
@@ -328,16 +339,5 @@ pub trait MinerAdapter: Send + Sync {
         coin: &CatalogItem,
         pool: Option<&CatalogItem>,
         machine: &Machine,
-    ) -> Result<Value>;
-}
-#[async_trait]
-pub trait BmcProvider: Send + Sync {
-    fn id(&self) -> &str;
-    async fn read(&self, config: &BmcConfig, credential: &Credential, kind: &str) -> Result<Value>;
-    async fn power(
-        &self,
-        config: &BmcConfig,
-        credential: &Credential,
-        action: &str,
     ) -> Result<Value>;
 }

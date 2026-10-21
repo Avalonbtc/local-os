@@ -17,7 +17,7 @@ test("electricity price is a farm setting used by the daily cost estimate", asyn
     let body: unknown = [];
     if (path.endsWith("/me")) body = { actor: { id, name: "fixture", token_id: null }, csrf: "test", expires_at: "2099-01-01" };
     if (path.endsWith("/machines"))
-      body = [{ id, name: "rig-1", host: "10.0.0.2", port: 22, username: "root", tags: [], policy: {}, bmc: null, group: "", is_controller: false }];
+      body = [{ id, name: "rig-1", host: "10.0.0.2", port: 22, username: "root", tags: [], policy: {}, group: "", is_controller: false }];
     if (path.includes("telemetry"))
       body = [{ machine_id: id, kind: "system", observed_at: new Date().toISOString(), error: null, data: { cpu_pct: 90, cpu_power_w: 500 } }];
     await route.fulfill({ json: body });

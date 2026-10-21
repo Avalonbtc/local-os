@@ -363,7 +363,7 @@ mod tests {
             miner: miner.data.clone(),
             config: json!({"wallet_template":"%WAL%.%WORKER_NAME%", "user_config":"pool configured here"}),
         };
-        let host: Machine = serde_json::from_value(json!({"id":id,"name":"worker1","host":"127.0.0.1","port":22,"username":"test","host_key":"test","group":"","tags":[],"is_controller":false,"bmc":null,"policy":{},"created_at":"2026-01-01T00:00:00Z"})).unwrap();
+        let host: Machine = serde_json::from_value(json!({"id":id,"name":"worker1","host":"127.0.0.1","port":22,"username":"test","host_key":"test","group":"","tags":[],"is_controller":false,"policy":{},"created_at":"2026-01-01T00:00:00Z"})).unwrap();
         let rendered = HiveCustom
             .render(&miner, &task, &wallet, &coin, None, &host)
             .unwrap();

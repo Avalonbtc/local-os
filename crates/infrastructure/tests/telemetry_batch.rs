@@ -22,7 +22,7 @@ async fn batched_observations_events_messages_and_deltas() {
     let machine = Uuid::new_v4();
     let input: MachineInput = serde_json::from_value(json!({"name":format!("batch-{machine}"),"host":"127.0.0.1","port":22,"username":"root","host_key":"SHA256:fixture","policy":{}})).unwrap();
     store
-        .save_machine(machine, &input, Some("secret"), None, &actor)
+        .save_machine(machine, &input, Some("secret"), &actor)
         .await
         .unwrap();
 

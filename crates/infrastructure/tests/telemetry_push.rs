@@ -5,7 +5,7 @@ use rig_application::{
     push::{PushHub, PushReply, PushSettings},
 };
 use rig_domain::*;
-use rig_infrastructure::{adapters, bmc, pg::PgStore, ssh::SshExecutor, vault::Vault};
+use rig_infrastructure::{adapters, pg::PgStore, ssh::SshExecutor, vault::Vault};
 use serde_json::{Value, json};
 use sha2::Sha256;
 use std::io::Write;
@@ -119,7 +119,7 @@ async fn pushed_snapshots_replace_ssh_reads_with_patches_events_and_policy() {
         })
         .unwrap();
     store
-        .save_machine(machine, &input, Some(&secret), None, &actor)
+        .save_machine(machine, &input, Some(&secret), &actor)
         .await
         .unwrap();
     let rig = Arc::new(QuietRig {
@@ -127,13 +127,12 @@ async fn pushed_snapshots_replace_ssh_reads_with_patches_events_and_policy() {
         reads: AtomicUsize::new(0),
     });
     let app = App {
-        bios: None,
         repository: store.clone(),
         vault: vault.clone(),
         remote: Arc::new(SshExecutor::default()),
         runtime: rig.clone(),
         adapters: Arc::new(adapters::registry()),
-        bmc: Arc::new(bmc::registry()),
+        agents: Default::default(),
         push: Arc::new(PushHub::new(Some(PushSettings {
             url: None,
             port: 8091,

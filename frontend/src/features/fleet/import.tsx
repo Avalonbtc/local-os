@@ -217,8 +217,6 @@ export function BatchAddModal({ open, onClose }: { open: boolean; onClose: () =>
       is_controller: false,
       credential,
       sudo_password: setup.sudo_password || null,
-      bmc: null,
-      bmc_credential: null,
       policy: {},
     }));
     setBusy(true);

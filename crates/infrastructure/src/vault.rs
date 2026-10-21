@@ -78,6 +78,12 @@ impl SecretVault for Vault {
         OsRng.fill_bytes(&mut bytes);
         hex::encode(bytes)
     }
+    fn derive(&self, label: &str) -> Option<String> {
+        Some(hex::encode(hmac_sha256(
+            &self.push_root,
+            format!("derive:{label}").as_bytes(),
+        )))
+    }
     fn push_key(&self, machine: uuid::Uuid) -> Option<String> {
         Some(hex::encode(hmac_sha256(
             &self.push_root,

@@ -32,12 +32,12 @@ jobs:
       - run: cargo test -p rig-infrastructure --test postgres -- --ignored
       - run: cargo test -p rig-infrastructure --test job_dispatch -- --ignored
       - run: cargo test -p rig-infrastructure --test telemetry_push -- --ignored
-      - run: python3 tests/redfish/run.py
+      - run: cargo test -p rig-infrastructure --test enrollment -- --ignored
       - run: python3 tests/check_boundaries.py
       - run: python3 tests/test_dependencies.py
-      - run: python3 tests/test_bios.py
       - run: python3 tests/test_gpu_oc.py
       - run: python3 tests/test_push.py
+      - run: python3 tests/test_agent.py
       - run: cargo run -q -p rigdeck -- openapi > openapi.json
       - run: npm ci --no-audit --no-fund && npm run types && npm run build
         working-directory: frontend

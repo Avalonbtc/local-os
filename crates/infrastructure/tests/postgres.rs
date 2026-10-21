@@ -93,14 +93,11 @@ async fn postgres_migrations_catalog_queue_leases_and_retention() {
                     group: "integration".into(),
                     tags: vec![],
                     is_controller: false,
-                    bmc: None,
                     policy: json!({}),
                     credential: None,
-                    bmc_credential: None,
                     sudo_password: None,
                 },
                 Some("encrypted-test-fixture"),
-                None,
                 &actor,
             )
             .await

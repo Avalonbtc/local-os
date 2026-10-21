@@ -3,7 +3,7 @@ use rand::RngCore;
 use rig_application::App;
 use rig_domain::*;
 use rig_infrastructure::{
-    adapters, bmc, pg::PgStore, runtime::ScreenRuntime, ssh::SshExecutor, vault::Vault,
+    adapters, pg::PgStore, runtime::ScreenRuntime, ssh::SshExecutor, vault::Vault,
 };
 use std::{path::PathBuf, sync::Arc};
 
@@ -57,49 +57,70 @@ async fn main() -> anyhow::Result<()> {
     if command != "serve" {
         anyhow::bail!("Unknown command: {command}");
     }
-    let remote = Arc::new(SshExecutor::default());
+    let bind = std::env::var("RIGDECK_BIND").unwrap_or_else(|_| "127.0.0.1:8080".into());
+    let origin = std::env::var("RIGDECK_ORIGIN").unwrap_or_else(|_| "https://rigdeck.local".into());
+    // The address rigs use to reach this controller: install command, agent channel, pushes.
+    let public_url = std::env::var("RIGDECK_PUBLIC_URL")
+        .ok()
+        .filter(|url| !url.is_empty())
+        .unwrap_or_else(|| origin.clone())
+        .trim_end_matches('/')
+        .to_owned();
+    if !(public_url.starts_with("https://") || public_url.starts_with("http://")) {
+        anyhow::bail!("RIGDECK_PUBLIC_URL (or RIGDECK_ORIGIN) must be an http(s) URL");
+    }
     let root = PathBuf::from(std::env::var("RIGDECK_DATA_DIR").unwrap_or_else(|_| "data".into()));
+    // Agent machines are reached through the connection their rig keeps open; the rest over SSH.
+    let agents = Arc::new(rig_application::agent::AgentHub::new(
+        &public_url,
+        Some(rig_application::agent::Installer {
+            script: rig_infrastructure::runtime::agent_installer(&public_url),
+            runtime: rig_infrastructure::runtime::runtime_source(),
+        }),
+    ));
+    let remote = Arc::new(rig_application::agent::RoutedExecutor {
+        ssh: Arc::new(SshExecutor::default()),
+        agent: Arc::new(rig_application::agent::AgentExecutor {
+            hub: agents.clone(),
+        }),
+    });
     let runtime = Arc::new(ScreenRuntime::new(remote.clone(), root.join("packages"))?);
-    // Rigs push their telemetry to this listener (plain HTTP, every request HMAC-signed with a
-    // per-machine key). "off" keeps the controller reading every rig over SSH.
+    // Telemetry push. By default rigs push to <public URL>/ingest/v1/push. RIGDECK_INGEST_BIND
+    // adds a separate plain-HTTP listener for a LAN; "off" reads every rig on demand instead.
+    let ingest_setting = std::env::var("RIGDECK_INGEST_BIND").unwrap_or_default();
     let ingest_bind =
-        std::env::var("RIGDECK_INGEST_BIND").unwrap_or_else(|_| "0.0.0.0:8091".into());
-    let ingest_bind = (!ingest_bind.is_empty() && ingest_bind != "off").then_some(ingest_bind);
-    let push = match &ingest_bind {
-        Some(bind) => {
-            let port = bind
+        (!ingest_setting.is_empty() && ingest_setting != "off").then_some(ingest_setting.clone());
+    let ingest_url = std::env::var("RIGDECK_INGEST_URL")
+        .ok()
+        .filter(|url| !url.is_empty());
+    if let Some(url) = &ingest_url
+        && !(url.starts_with("http://") || url.starts_with("https://"))
+    {
+        anyhow::bail!("RIGDECK_INGEST_URL must be an http(s) URL");
+    }
+    let push = match (&ingest_bind, ingest_setting.as_str()) {
+        (_, "off") => None,
+        (Some(bind), _) => Some(rig_application::push::PushSettings {
+            url: ingest_url,
+            port: bind
                 .parse::<std::net::SocketAddr>()
                 .map_err(|_| anyhow::anyhow!("RIGDECK_INGEST_BIND must be host:port or off"))?
-                .port();
-            let url = std::env::var("RIGDECK_INGEST_URL")
-                .ok()
-                .filter(|url| !url.is_empty());
-            if let Some(url) = &url
-                && !(url.starts_with("http://") || url.starts_with("https://"))
-            {
-                anyhow::bail!("RIGDECK_INGEST_URL must be an http(s) URL");
-            }
-            Some(rig_application::push::PushSettings { url, port })
-        }
-        None => None,
+                .port(),
+        }),
+        (None, _) => Some(rig_application::push::PushSettings {
+            url: Some(ingest_url.unwrap_or_else(|| format!("{public_url}/ingest/v1/push"))),
+            port: 0,
+        }),
     };
     let app = App {
         push: Arc::new(rig_application::push::PushHub::new(push)),
-        bios: Some(Arc::new(rig_infrastructure::bios::SumBios {
-            root: root.join("bios"),
-            binary: PathBuf::from(
-                std::env::var("RIGDECK_SUM_PATH").unwrap_or_else(|_| "/opt/supermicro/sum".into()),
-            ),
-        })),
+        agents,
         repository: store,
         vault,
         remote,
         runtime,
         adapters: Arc::new(adapters::registry()),
-        bmc: Arc::new(bmc::registry()),
     };
-    let bind = std::env::var("RIGDECK_BIND").unwrap_or_else(|_| "127.0.0.1:8080".into());
-    let origin = std::env::var("RIGDECK_ORIGIN").unwrap_or_else(|_| "https://rigdeck.local".into());
     let secure_cookie = std::env::var("RIGDECK_INSECURE_LOCALHOST").as_deref() != Ok("1");
     if !secure_cookie
         && (!bind.starts_with("127.0.0.1:")

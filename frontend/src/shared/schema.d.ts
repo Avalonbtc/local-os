@@ -81,6 +81,83 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Success */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentStatus"][];
+                    };
+                };
+                /** @description Validation error */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Authentication required */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden or invalid CSRF */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Dependency unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit": {
         parameters: {
             query?: never;
@@ -400,6 +477,185 @@ export interface paths {
             requestBody?: never;
             responses: {
                 /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/enrollment-tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Success */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EnrollmentToken"][];
+                    };
+                };
+                /** @description Validation error */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Authentication required */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden or invalid CSRF */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Dependency unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["EnrollmentTokenInput"];
+                };
+            };
+            responses: {
+                /** @description Success */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EnrollmentToken"];
+                    };
+                };
+                /** @description Validation error */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Authentication required */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden or invalid CSRF */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Dependency unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/enrollment-tokens/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Revoked */
                 204: {
                     headers: {
                         [name: string]: unknown;
@@ -1527,170 +1783,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/machines/{id}/bios": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Success */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["BiosSnapshot"];
-                    };
-                };
-                /** @description Validation error */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Authentication required */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Forbidden or invalid CSRF */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Not found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Conflict */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Dependency unavailable */
-                503: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/machines/{id}/bmc/{kind}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                kind: string;
-                id: string;
-            };
-            cookie?: never;
-        };
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    kind: string;
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Success */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Object"];
-                    };
-                };
-                /** @description Validation error */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Authentication required */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Forbidden or invalid CSRF */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Not found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Conflict */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Dependency unavailable */
-                503: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/machines/{id}/history": {
         parameters: {
             query: {
@@ -2805,21 +2897,6 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         Action: {
-            /**
-             * @description After a reboot, accept the read-back values and drop the pending marker.
-             * @default false
-             */
-            discard_pending: boolean;
-            /** @constant */
-            kind: "bios_read";
-        } | {
-            changes: {
-                [key: string]: string;
-            };
-            /** @constant */
-            kind: "bios_write";
-            revision: string;
-        } | {
             /** @constant */
             kind: "bootstrap";
         } | {
@@ -2840,10 +2917,6 @@ export interface components {
             instances: string[];
             /** @constant */
             kind: "miner";
-            operation: string;
-        } | {
-            /** @constant */
-            kind: "power";
             operation: string;
         } | {
             config: components["schemas"]["GpuOcConfig"];
@@ -2885,6 +2958,19 @@ export interface components {
             releases: components["schemas"]["MinerRelease"][];
             /** Format: uint32 */
             schema_version: number;
+        };
+        /**
+         * AgentStatus
+         * @description A live agent connection.
+         */
+        AgentStatus: {
+            address?: string | null;
+            /** Format: date-time */
+            connected_at: string;
+            hostname: string;
+            /** Format: uuid */
+            machine_id: string;
+            version: string;
         };
         AmdOc: {
             /**
@@ -2959,43 +3045,6 @@ export interface components {
             id: number;
             target: string;
         };
-        BiosSetting: {
-            condition: string;
-            group: string;
-            help: string;
-            id: string;
-            kind: string;
-            license: string;
-            /** Format: int64 */
-            maximum?: number | null;
-            /** Format: int64 */
-            minimum?: number | null;
-            name: string;
-            options: string[];
-            /** Format: int64 */
-            step?: number | null;
-            value: string;
-        };
-        /** BiosSnapshot */
-        BiosSnapshot: {
-            last_operation?: string | null;
-            licenses: string[];
-            /** Format: uuid */
-            machine_id: string;
-            observed_at?: string | null;
-            pending: {
-                [key: string]: string;
-            };
-            revision?: string | null;
-            settings: components["schemas"]["BiosSetting"][];
-        };
-        BmcConfig: {
-            ca_pem?: string | null;
-            /** @default redfish */
-            provider: string;
-            url: string;
-            username: string;
-        };
         /** CatalogInput */
         CatalogInput: {
             data: unknown;
@@ -3027,6 +3076,58 @@ export interface components {
             private_key: string;
             /** @default null */
             sudo_password: string | null;
+        };
+        /**
+         * EnrollmentToken
+         * @description An install key: `curl …/agent/install.sh | sudo bash -s -- <token>` adds a machine.
+         */
+        EnrollmentToken: {
+            /**
+             * @description The full install command for this key.
+             * @default
+             */
+            command: string;
+            /** Format: date-time */
+            created_at: string;
+            created_by: string;
+            /** Format: date-time */
+            expires_at?: string | null;
+            /** @description Group and tags given to machines that join with this key. */
+            group: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: int32 */
+            max_uses?: number | null;
+            name: string;
+            /** Format: date-time */
+            revoked_at?: string | null;
+            tags: string[];
+            /**
+             * @description The key itself. Derived from the master key, so it can be shown again; filled in by the
+             *     application, never stored.
+             * @default
+             */
+            token: string;
+            /** Format: int32 */
+            uses: number;
+        };
+        /** EnrollmentTokenInput */
+        EnrollmentTokenInput: {
+            /**
+             * Format: uint32
+             * @description Empty: never expires.
+             */
+            expires_in_hours?: number | null;
+            /** @default  */
+            group: string;
+            /**
+             * Format: int32
+             * @description Empty: unlimited.
+             */
+            max_uses?: number | null;
+            name: string;
+            /** @default [] */
+            tags: string[];
         };
         /**
          * FarmSettings
@@ -3133,7 +3234,6 @@ export interface components {
         };
         /** Machine */
         Machine: {
-            bmc?: components["schemas"]["BmcConfig"] | null;
             /** Format: date-time */
             created_at: string;
             group: string;
@@ -3147,6 +3247,12 @@ export interface components {
             /** Format: uint16 */
             port: number;
             tags: string[];
+            /**
+             * @description "ssh": the controller connects to the rig. "agent": the rig's rigdeck-agent keeps a
+             *     connection open to the controller and receives its commands over it.
+             * @default ssh
+             */
+            transport: string;
             username: string;
         };
         /**
@@ -3177,8 +3283,6 @@ export interface components {
             name: string;
         };
         MachineInput: {
-            bmc?: components["schemas"]["BmcConfig"] | null;
-            bmc_credential?: components["schemas"]["Credential"] | null;
             credential?: components["schemas"]["Credential"] | null;
             /** @default  */
             group: string;

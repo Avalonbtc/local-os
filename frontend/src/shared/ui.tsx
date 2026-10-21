@@ -1,7 +1,6 @@
 import { Alert, Empty, Spin, Tag } from "antd";
 import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
-import { data, isFresh, type Observation } from "./api";
 
 export function PageHeader({
   title,
@@ -69,14 +68,6 @@ const statuses: Record<string, [string, string]> = {
 export function Status({ value }: { value?: string | null }) {
   const [color, label] = statuses[value ?? ""] ?? ["default", value ?? "未知"];
   return <Tag color={color}>{label}</Tag>;
-}
-export function PowerState({ observation }: { observation?: Observation }) {
-  if (!isFresh(observation, 90))
-    return <Tag color={observation?.error ? "warning" : "default"}>{observation?.error ? "读取失败" : "未采集"}</Tag>;
-  const state = String(data(observation?.data).state ?? "").toLowerCase();
-  if (state === "on") return <Tag color="success">已开机</Tag>;
-  if (state === "off") return <Tag>已关机</Tag>;
-  return <Tag color="warning">状态未知</Tag>;
 }
 export const number = (n: unknown, digits = 1) =>
   typeof n === "number"

@@ -38,14 +38,15 @@ sudo bash scripts/verify-backup.sh backups/本次目录/database.dump
 
 | 现象 | 操作 |
 |---|---|
-| SSH host key mismatch | 从物理/BMC 控制台核实新指纹，再编辑机器；不关闭指纹检查 |
+| 安装命令报“安装密钥无效…” | 到“设定 → 安装密钥”确认这把密钥没有撤销、过期或用完台数，或在“添加矿机”复制新的命令 |
+| 安装命令下载失败 / 证书错误 | 矿机要能访问面板地址的 443；局域网 HTTPS 模式用的是内部 CA，矿机不认，改用 `--mode public` 或把根证书导入矿机 |
+| 一键加入的矿机显示“未连接” | 在矿机上 `systemctl status rigdeck-agent` 和 `journalctl -u rigdeck-agent -n 50`；被拒绝（机器已删除）时每 5 分钟重试，重新执行安装命令即可重新加入 |
+| SSH host key mismatch | 从物理控制台核实新指纹，再编辑机器；不关闭指纹检查 |
 | sudo 不可用 | 在机器编辑页填写正确的 sudo 密码，或给专用管理账户配置免密码 sudo；保存后用“测试连接”验证 |
 | apt 软件源超时 | 基础部署仅在缺少 screen 时安装软件包，并限制 apt 等待时间；HiveOS 自定义包缺少 jq 等依赖时按具体缺项提示，修复软件源后再安装 |
 | 自定义包 mount/unshare 失败 | 检查目标机 mount namespace 权限；普通容器不具备所需权限 |
 | 部署 unknown | 检查任务 operation_id 与 `sudo rig-miner operation-status <ID>`，在页面重新对账 |
 | 矿工 faulted | 查看重启预算及原因；修复配置/矿池后显式启动或重启 |
-| BMC TLS 失败 | 上传该 BMC 的可信 CA，或安装有效证书，不忽略校验 |
-| Redfish 不支持优雅重启 | 使用受支持的操作，或明确选择强制重启；不自动升级动作 |
 | PG 不可用 | `systemctl status postgresql`；修复 PG 和磁盘，主控暂不接受新写操作；本地 watchdog 不受影响 |
 | 重启后服务起不来 | `journalctl -u rigdeck -n 200` 查看编译或启动错误；修好代码后 `bash scripts/native/restart.sh` |
 | 统计过期 | 区分主控采集失败、矿工 API 失败和真实算力为零；面板不补假数据 |
@@ -53,7 +54,7 @@ sudo bash scripts/verify-backup.sh backups/本次目录/database.dump
 
 任务输出每目标最多 1 MiB，达到上限标记截断。目标机 screen/custom `*.log` 超过 32 MiB 时保留约 8 MiB 尾部并加截断标记；软件包、配置版本及远端操作记录不自动删除，避免破坏回退与对账。需要定期关注这些目录空间，清理前确认不被运行版本和未完成操作引用。
 
-主控被选入 BMC 关机/重启时默认排除，显式包含才最后执行。管理员自行提交的任意 shell 脚本不能可靠判断是否含关机命令，批量命令目标需自行确认。
+管理员自行提交的任意 shell 脚本不能可靠判断是否含关机命令，批量命令目标需自行确认。
 
 ## 24 小时观察
 

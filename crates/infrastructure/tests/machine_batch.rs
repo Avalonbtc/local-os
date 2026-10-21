@@ -1,6 +1,6 @@
 use rig_application::App;
 use rig_domain::*;
-use rig_infrastructure::{adapters, bmc, pg::PgStore, vault::Vault};
+use rig_infrastructure::{adapters, pg::PgStore, vault::Vault};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -79,13 +79,12 @@ async fn batch_probe_and_create_report_per_row_and_queue_one_bootstrap() {
     };
     let vault = Arc::new(Vault::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").unwrap());
     let app = App {
-        bios: None,
         repository: store.clone(),
         vault,
         remote: Arc::new(Probe),
         runtime: Arc::new(NoRuntime),
         adapters: Arc::new(adapters::registry()),
-        bmc: Arc::new(bmc::registry()),
+        agents: Default::default(),
         push: Default::default(),
     };
     let hosts = ["10.9.0.1", "10.9.0.9", "10.9.0.2"];
@@ -165,7 +164,7 @@ async fn batch_probe_and_create_report_per_row_and_queue_one_bootstrap() {
         .unwrap();
     assert_eq!(created.group, "rack-a");
     assert!(
-        app.credential(created.id, false).await.is_ok(),
+        app.credential(created.id).await.is_ok(),
         "shared credential stored encrypted per machine"
     );
     app.cancel_job(&actor, job.id).await.unwrap();

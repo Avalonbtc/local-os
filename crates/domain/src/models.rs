@@ -5,32 +5,6 @@ use serde_json::Value;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct BiosSetting {
-    pub id: String,
-    pub name: String,
-    pub group: String,
-    pub value: String,
-    pub kind: String,
-    pub options: Vec<String>,
-    pub minimum: Option<i64>,
-    pub maximum: Option<i64>,
-    pub step: Option<i64>,
-    pub help: String,
-    pub condition: String,
-    pub license: String,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct BiosSnapshot {
-    pub machine_id: Uuid,
-    pub settings: Vec<BiosSetting>,
-    pub licenses: Vec<String>,
-    pub revision: Option<String>,
-    pub pending: std::collections::BTreeMap<String, String>,
-    pub observed_at: Option<String>,
-    pub last_operation: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Actor {
     pub id: Uuid,
     pub name: String,
@@ -53,6 +27,84 @@ pub struct TokenInfo {
     pub name: String,
     pub created_at: DateTime<Utc>,
     pub revoked_at: Option<DateTime<Utc>>,
+}
+
+/// An install key: `curl …/agent/install.sh | sudo bash -s -- <token>` adds a machine.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EnrollmentToken {
+    pub id: Uuid,
+    pub name: String,
+    /// The key itself. Derived from the master key, so it can be shown again; filled in by the
+    /// application, never stored.
+    #[serde(default)]
+    pub token: String,
+    /// The full install command for this key.
+    #[serde(default)]
+    pub command: String,
+    /// Group and tags given to machines that join with this key.
+    pub group: String,
+    pub tags: Vec<String>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub max_uses: Option<i32>,
+    pub uses: i32,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub created_by: String,
+    pub created_at: DateTime<Utc>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EnrollmentTokenInput {
+    pub name: String,
+    #[serde(default)]
+    pub group: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Empty: never expires.
+    pub expires_in_hours: Option<u32>,
+    /// Empty: unlimited.
+    pub max_uses: Option<i32>,
+}
+/// Sent by `rig-miner enroll` on the rig.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EnrollRequest {
+    pub token: String,
+    /// SHA-256 of the rig's /etc/machine-id: a reinstall keeps the same machine.
+    pub fingerprint: String,
+    pub hostname: String,
+    #[serde(default)]
+    pub addresses: Vec<String>,
+    #[serde(default)]
+    pub version: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EnrollReply {
+    pub machine_id: Uuid,
+    pub name: String,
+    pub created: bool,
+    /// HMAC key the agent authenticates with (and signs telemetry pushes with).
+    pub key: String,
+    /// WebSocket the agent keeps open.
+    pub connect_url: String,
+    /// Telemetry push target, when push is enabled.
+    pub push: Option<Value>,
+}
+pub struct NewAgentMachine {
+    pub fingerprint: String,
+    pub name: String,
+    pub host: String,
+    pub group: String,
+    pub tags: Vec<String>,
+    /// Encrypted placeholder credential: agent machines have none, but the runtime layer
+    /// passes one through.
+    pub ssh_secret: String,
+}
+/// A live agent connection.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AgentStatus {
+    pub machine_id: Uuid,
+    pub connected_at: DateTime<Utc>,
+    pub version: String,
+    pub hostname: String,
+    pub address: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -111,9 +163,20 @@ pub struct Machine {
     pub group: String,
     pub tags: Vec<String>,
     pub is_controller: bool,
-    pub bmc: Option<BmcConfig>,
     pub policy: Value,
     pub created_at: DateTime<Utc>,
+    /// "ssh": the controller connects to the rig. "agent": the rig's rigdeck-agent keeps a
+    /// connection open to the controller and receives its commands over it.
+    #[serde(default = "ssh_transport")]
+    pub transport: String,
+}
+fn ssh_transport() -> String {
+    "ssh".into()
+}
+impl Machine {
+    pub fn is_agent(&self) -> bool {
+        self.transport == "agent"
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MachineInput {
@@ -133,8 +196,6 @@ pub struct MachineInput {
     pub credential: Option<Credential>,
     /// Optional privilege password. Omitted on edit to retain the saved value.
     pub sudo_password: Option<String>,
-    pub bmc: Option<BmcConfig>,
-    pub bmc_credential: Option<Credential>,
     #[serde(default = "empty_object")]
     pub policy: Value,
 }
@@ -191,17 +252,6 @@ impl std::fmt::Debug for Credential {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Credential([redacted])")
     }
-}
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct BmcConfig {
-    pub url: String,
-    pub username: String,
-    #[serde(default = "bmc_provider")]
-    pub provider: String,
-    pub ca_pem: Option<String>,
-}
-fn bmc_provider() -> String {
-    "redfish".into()
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -280,15 +330,6 @@ pub struct FlightInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Action {
-    BiosRead {
-        /// After a reboot, accept the read-back values and drop the pending marker.
-        #[serde(default)]
-        discard_pending: bool,
-    },
-    BiosWrite {
-        revision: String,
-        changes: std::collections::BTreeMap<String, String>,
-    },
     Bootstrap,
     Command {
         script: String,
@@ -301,9 +342,6 @@ pub enum Action {
     Miner {
         operation: String,
         instances: Vec<String>,
-    },
-    Power {
-        operation: String,
     },
     /// Applies overclocking on the rig and keeps it for re-application after reboot.
     GpuOc {

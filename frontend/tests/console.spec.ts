@@ -38,15 +38,13 @@ test("login, custom coin from wallet, navigation, token revocation and responsiv
   for (const [label, heading] of [
     ["飞行表", "添加新的飞行表"],
     ["超频", "超频模板"],
-    ["BMC 设备", "BMC"],
-    ["BIOS", "BIOS 管理"],
     ["多机终端", "多机终端"],
     ["设定", "设置"],
   ]) {
     await page.locator("nav.rd-tabs").getByText(label, { exact: true }).click();
     await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
   }
-  for (const gone of ["/coins", "/pools", "/miners", "/jobs"])
+  for (const gone of ["/coins", "/pools", "/miners", "/jobs", "/bmc", "/bios"])
     await expect(page.locator(`nav.rd-tabs a[href="${gone}"]`)).toHaveCount(0);
   const tokenName = `browser-validation-${Date.now()}`;
   await page.getByRole("tab", { name: "AI / API 令牌", exact: true }).click();

@@ -2,7 +2,9 @@
 # Install RigDeck on an Ubuntu/Debian controller WITHOUT Docker: PostgreSQL 18, Node 22, Rust,
 # Caddy (HTTPS mode) and a systemd service that runs straight from this source tree.
 #
-#   sudo bash scripts/native/install.sh --host rigdeck.local            # HTTPS via Caddy (default)
+#   sudo bash scripts/native/install.sh --mode public --host panel.example.com --email you@example.com
+#                                                                       # public VPS, Let's Encrypt
+#   sudo bash scripts/native/install.sh --host rigdeck.local            # LAN HTTPS, Caddy internal CA (default)
 #   sudo bash scripts/native/install.sh --host rigdeck.local --listen 192.168.1.5   # Caddy on one address
 #   sudo bash scripts/native/install.sh --mode tunnel                   # SSH tunnel only (127.0.0.1:18082)
 #   sudo bash scripts/native/install.sh --mode cloudflared --host panel.example.com
@@ -15,14 +17,16 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 mode="https"
 host="rigdeck.local"
 listen="0.0.0.0"
+email=""
 start=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --host) host="$2"; shift 2 ;;
     --mode) mode="$2"; shift 2 ;;
     --listen) listen="$2"; shift 2 ;;
+    --email) email="$2"; shift 2 ;;
     --no-start) start=0; shift ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) echo "未知参数：$1" >&2; exit 2 ;;
   esac
 done
@@ -33,7 +37,11 @@ say() { printf '\n\033[1;32m==> %s\033[0m\n' "$*"; }
 die() { printf '\033[1;31m错误：%s\033[0m\n' "$*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "请用 sudo 运行"
-[[ "$mode" =~ ^(https|tunnel|cloudflared)$ ]] || die "--mode 只能是 https、tunnel 或 cloudflared"
+[[ "$mode" =~ ^(public|https|tunnel|cloudflared)$ ]] || die "--mode 只能是 public、https、tunnel 或 cloudflared"
+if [[ "$mode" == public ]]; then
+  [[ "$host" != rigdeck.local && "$host" == *.* ]] || die "--mode public 需要 --host 公网域名（DNS 已解析到本机）"
+  [[ "$email" == *@* ]] || die "--mode public 需要 --email（Let's Encrypt 证书到期提醒）"
+fi
 [[ "$host" =~ ^[A-Za-z0-9.-]+$ ]] || die "--host 只能是主机名或 IPv4 地址"
 [[ "$listen" =~ ^[0-9.]+$ ]] || die "--listen 只能是 IPv4 地址"
 # The service runs as (and builds as) the owner of the source tree, like restart.sh assumes.
@@ -52,7 +60,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 say "安装系统依赖"
 apt-get update
-apt-get install -y ca-certificates curl gnupg build-essential pkg-config git python3 ipmitool jq sudo
+apt-get install -y ca-certificates curl gnupg build-essential pkg-config git python3 jq sudo
 
 if [[ ! -x /usr/lib/postgresql/18/bin/postgres ]]; then
   say "安装 PostgreSQL 18（与原容器同版本，旧备份可直接恢复）"
@@ -82,7 +90,7 @@ fi
 as_user "$user_home/.cargo/bin/rustup" toolchain install 1.91.1 --profile minimal
 as_user bash -c 'cd "$1" && "$HOME/.cargo/bin/rustup" override set 1.91.1' bash "$repo"
 
-if [[ "$mode" == https ]] && ! command -v caddy >/dev/null; then
+if [[ "$mode" == https || "$mode" == public ]] && ! command -v caddy >/dev/null; then
   say "安装 Caddy"
   curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
   curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt > /etc/apt/sources.list.d/caddy-stable.list
@@ -108,6 +116,8 @@ fi
 if [[ ! -f /etc/rigdeck/rigdeck.env ]]; then
   db_password="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
   case "$mode" in
+    public)
+      bind="127.0.0.1:8080"; origin="https://$host"; extra="RIGDECK_TRUST_PROXY_HEADERS=1" ;;
     https)
       bind="127.0.0.1:8080"; origin="https://$host"; extra="" ;;
     tunnel)
@@ -123,11 +133,11 @@ RIGDECK_ORIGIN=$origin
 RIGDECK_MASTER_KEY_FILE=/etc/rigdeck/master.key
 RIGDECK_DATA_DIR=/var/lib/rigdeck-controller
 RIGDECK_STATIC_DIR=$repo/frontend/dist
-RIGDECK_SUM_PATH=$repo/tools/sum/sum
-# 矿机看门狗主动上报统计的端口（HTTP，每个请求用该机器的密钥签名）；off 则改回主控 SSH 读取
-RIGDECK_INGEST_BIND=0.0.0.0:8091
-# 矿机访问主控的上报地址；留空时按每台矿机看到的 SSH 来源地址自动生成
-#RIGDECK_INGEST_URL=http://192.168.1.10:8091/ingest/v1/push
+# 矿机访问主控用的地址（安装命令、矿机长连接、统计上报）；默认等于 RIGDECK_ORIGIN。
+# tunnel 模式下面板只在本机，请填矿机能访问到的地址，例如 https://panel.example.com
+#RIGDECK_PUBLIC_URL=
+# 统计上报默认发到 <对外地址>/ingest/v1/push。局域网可另开明文端口：RIGDECK_INGEST_BIND=0.0.0.0:8091；off 关闭上报
+#RIGDECK_INGEST_BIND=
 RUST_LOG=info,sqlx=warn
 $extra
 ENV
@@ -158,7 +168,10 @@ tr -d '\r' < "$repo/deploy/native/rigdeck.service.in" \
 systemctl daemon-reload
 systemctl enable rigdeck >/dev/null
 
-if [[ "$mode" == https ]]; then
+if [[ "$mode" == public ]]; then
+  tr -d '\r' < "$repo/deploy/native/Caddyfile.public.in" | sed -e "s|@HOST@|$host|g" -e "s|@EMAIL@|$email|g" > /etc/caddy/Caddyfile
+  systemctl enable caddy >/dev/null
+elif [[ "$mode" == https ]]; then
   tr -d '\r' < "$repo/deploy/native/Caddyfile.in" | sed -e "s|@HOST@|$host|g" -e "s|@LISTEN@|$listen|g" > /etc/caddy/Caddyfile
   systemctl enable caddy >/dev/null
 fi
@@ -169,7 +182,7 @@ as_user bash "$repo/scripts/native/build.sh"
 if [[ $start -eq 1 ]]; then
   say "启动服务"
   systemctl restart rigdeck
-  [[ "$mode" == https ]] && systemctl restart caddy
+  [[ "$mode" == https || "$mode" == public ]] && systemctl restart caddy
   sleep 3
   systemctl --no-pager --lines=5 status rigdeck || true
 fi
@@ -181,7 +194,7 @@ cat <<DONE
   改完代码后：  bash scripts/native/restart.sh     （先编译，成功后才重启）
   查看日志：    journalctl -u rigdeck -f
   配置文件：    /etc/rigdeck/rigdeck.env   主密钥：/etc/rigdeck/master.key（请另外备份）
-  统计上报：    矿机主动推送到主控 TCP 8091（RIGDECK_INGEST_BIND）；有防火墙时请对矿机网段放行
+  添加矿机：    面板「添加矿机」复制安装命令，到矿机上执行一次即可；矿机主动连接面板，无需开放矿机端口
 DONE
 if [[ "$mode" == https ]]; then
   echo "  HTTPS 根证书：/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt（导入到访问设备）"

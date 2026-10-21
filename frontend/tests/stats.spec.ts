@@ -11,7 +11,7 @@ test("hashrate stays visible through normal pipeline delay and expires when real
     let body: unknown = [];
     if (path.endsWith("/me")) body = { actor: { id, name: "fixture", token_id: null }, csrf: "test", expires_at: "2099-01-01" };
     if (path.endsWith("/machines"))
-      body = [{ id, name: "7b12-2", host: "192.168.5.36", port: 22, username: "root", tags: [], policy: {}, bmc: null, group: "", is_controller: false }];
+      body = [{ id, name: "7b12-2", host: "192.168.5.36", port: 22, username: "root", tags: [], policy: {}, group: "", is_controller: false }];
     if (path.includes("telemetry"))
       body = [
         { machine_id: id, kind: "system", observed_at: new Date().toISOString(), error: null, data: { cpu_pct: 99, logical_cpus: 128 } },

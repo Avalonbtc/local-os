@@ -1,6 +1,6 @@
 use rig_application::App;
 use rig_domain::*;
-use rig_infrastructure::{adapters, bmc, pg::PgStore, ssh::SshExecutor, vault::Vault};
+use rig_infrastructure::{adapters, pg::PgStore, ssh::SshExecutor, vault::Vault};
 use serde_json::{Value, json};
 use std::{
     sync::{
@@ -85,13 +85,12 @@ async fn offline_hosts_and_transient_heartbeat_failure_do_not_interrupt_healthy_
         starts: AtomicUsize::new(0),
     });
     let app = App {
-        bios: None,
         repository: store.clone(),
         vault: vault.clone(),
         remote: Arc::new(SshExecutor::default()),
         runtime: runtime.clone(),
         adapters: Arc::new(adapters::registry()),
-        bmc: Arc::new(bmc::registry()),
+        agents: Default::default(),
         push: Default::default(),
     };
     let secret = vault
@@ -103,9 +102,9 @@ async fn offline_hosts_and_transient_heartbeat_failure_do_not_interrupt_healthy_
     let mut ids = Vec::new();
     for n in 0..9 {
         let id = Uuid::new_v4();
-        let input:MachineInput=serde_json::from_value(json!({"name":format!("{}-{}",if n==8 {"online-review"} else {"offline-review"},id),"host":"127.0.0.1","port":22,"username":"fixture","host_key":"SHA256:fixture","group":"test","tags":[],"is_controller":false,"bmc":null,"policy":{}})).unwrap();
+        let input:MachineInput=serde_json::from_value(json!({"name":format!("{}-{}",if n==8 {"online-review"} else {"offline-review"},id),"host":"127.0.0.1","port":22,"username":"fixture","host_key":"SHA256:fixture","group":"test","tags":[],"is_controller":false,"policy":{}})).unwrap();
         store
-            .save_machine(id, &input, Some(&secret), None, &actor)
+            .save_machine(id, &input, Some(&secret), &actor)
             .await
             .unwrap();
         ids.push(id);

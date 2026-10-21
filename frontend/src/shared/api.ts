@@ -18,6 +18,9 @@ export type AuditEvent = components["schemas"]["AuditEvent"];
 export type MachineMessage = components["schemas"]["MachineMessage"];
 export type MinerLog = components["schemas"]["MinerLog"];
 export type FarmSettings = components["schemas"]["FarmSettings"];
+export type AgentStatus = components["schemas"]["AgentStatus"];
+export type EnrollmentToken = components["schemas"]["EnrollmentToken"];
+export type EnrollmentTokenInput = components["schemas"]["EnrollmentTokenInput"];
 export type Data = Record<string, any>;
 
 let csrf = "";
@@ -73,7 +76,7 @@ export function useMachines() {
     refetchInterval: 10000,
   });
 }
-// The list never needs full BMC event logs or hardware inventories.
+// The list never needs hardware inventories.
 export function useFleetTelemetry() {
   return useQuery({
     queryKey: ["fleet-telemetry"],
@@ -115,6 +118,21 @@ export function useAdapters() {
   return useQuery({
     queryKey: ["adapters"],
     queryFn: () => unwrap(client.GET("/api/v1/adapters")),
+  });
+}
+/** Rigs whose agent is connected right now (one-command machines). */
+export function useAgents() {
+  return useQuery({
+    queryKey: ["agents"],
+    queryFn: ({ signal }) => unwrap(client.GET("/api/v1/agents", { signal })),
+    refetchInterval: 10000,
+  });
+}
+/** Install keys for `curl …/agent/install.sh | sudo bash -s -- <key>`. */
+export function useEnrollmentTokens() {
+  return useQuery({
+    queryKey: ["enrollment-tokens"],
+    queryFn: ({ signal }) => unwrap(client.GET("/api/v1/enrollment-tokens", { signal })),
   });
 }
 /** Farm-wide preferences (electricity price), edited under 设定 → 矿场. */
@@ -175,29 +193,6 @@ export function isFresh(o: Observation | undefined, seconds = 35) {
     !o.error &&
     serverNow() - new Date(o.observed_at).getTime() < seconds * 1000
   );
-}
-export function measuredPower(
-  power: Observation | undefined,
-  sensors: Observation | undefined,
-): number | undefined {
-  const dcmi = data(power?.data).power_w;
-  if (isFresh(power, 90) && typeof dcmi === "number" && dcmi > 0)
-    return dcmi;
-  if (!isFresh(sensors, 150)) return undefined;
-  const items = data(sensors?.data).items;
-  if (!Array.isArray(items)) return undefined;
-  const meter = items.find((item) => {
-    const name = String(item?.name ?? "");
-    const unit = String(item?.unit ?? "");
-    return (
-      (typeof item?.raw?.PowerConsumedWatts === "number" ||
-        /power consumed|power consumption|system power|总功耗/i.test(name)) &&
-      /^(w|watts?)$/i.test(unit)
-    );
-  });
-  const reading = meter?.raw?.PowerConsumedWatts ?? meter?.reading;
-  const value = typeof reading === "number" ? reading : Number(reading);
-  return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 const watt = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;

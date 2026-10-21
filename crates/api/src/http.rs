@@ -55,12 +55,8 @@ impl IntoResponse for ApiError {
 }
 type ApiResult<T> = std::result::Result<T, ApiError>;
 
-async fn bios_config(State(s): State<ApiState>, Path(id): Path<Uuid>) -> ApiResult<Json<Value>> {
-    Ok(Json(s.app.bios_cached(id).await?))
-}
-
 pub fn router(state: ApiState, static_dir: &str) -> Router {
-    let ingest = ingest_router(state.app.clone());
+    let ingest = ingest_router(state.app.clone()).merge(agent_router(state.app.clone()));
     let mcp = crate::mcp::service(state.app.clone());
     let protected = Router::new()
         .route("/me", get(me))
@@ -73,7 +69,15 @@ pub fn router(state: ApiState, static_dir: &str) -> Router {
         .route("/machines/batch", post(machines_batch))
         .route("/machines/{id}", put(machine_update).delete(machine_delete))
         .route("/machines/{id}/test", post(machine_test))
-        .route("/machines/{id}/bios", get(bios_config))
+        .route("/agents", get(agents))
+        .route(
+            "/enrollment-tokens",
+            get(enrollment_tokens).post(enrollment_token_create),
+        )
+        .route(
+            "/enrollment-tokens/{id}",
+            axum::routing::delete(enrollment_token_revoke),
+        )
         .route("/machines/{id}/terminal", get(terminal))
         .route("/catalog/{kind}", get(catalog).post(catalog_create))
         .route(
@@ -96,7 +100,6 @@ pub fn router(state: ApiState, static_dir: &str) -> Router {
         .route("/job-targets/{id}/resolve", post(target_resolve))
         .route("/telemetry", get(telemetry))
         .route("/machines/{id}/history", get(history))
-        .route("/machines/{id}/bmc/{kind}", get(bmc))
         .route("/machines/{id}/messages", get(messages))
         .route("/machines/{id}/messages/dismiss", post(messages_dismiss))
         .route("/machines/{id}/instances/{instance}/log", get(miner_log))
@@ -186,6 +189,175 @@ async fn ingest_push(
             .into_response(),
         Err(error) => ApiError(error).into_response(),
     }
+}
+/// Rig-facing endpoints of the one-command join and the agent channel. Public: the installer and
+/// runtime are not secret, enrollment needs an install key and the channel a machine key.
+pub fn agent_router(app: App) -> Router {
+    Router::new()
+        .route("/agent/install.sh", get(agent_install))
+        .route("/agent/v1/runtime.py", get(agent_runtime))
+        .route("/agent/v1/enroll", post(agent_enroll))
+        .route("/agent/v1/connect", get(agent_connect))
+        .layer(DefaultBodyLimit::max(64 * 1024))
+        .with_state(app)
+}
+fn client_address(headers: &HeaderMap, peer: Option<std::net::IpAddr>) -> String {
+    login_source(
+        headers,
+        peer,
+        std::env::var("RIGDECK_TRUST_PROXY_HEADERS").as_deref() == Ok("1"),
+    )
+}
+async fn agent_install(State(app): State<App>) -> Response {
+    match app.agents.installer() {
+        Some(installer) => (
+            [
+                (header::CONTENT_TYPE, "text/x-shellscript; charset=utf-8"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            installer.script.clone(),
+        )
+            .into_response(),
+        None => ApiError(Error::NotFound).into_response(),
+    }
+}
+async fn agent_runtime(State(app): State<App>) -> Response {
+    match app.agents.installer() {
+        Some(installer) => (
+            [
+                (header::CONTENT_TYPE, "text/x-python; charset=utf-8"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            installer.runtime,
+        )
+            .into_response(),
+        None => ApiError(Error::NotFound).into_response(),
+    }
+}
+async fn agent_enroll(
+    State(app): State<App>,
+    headers: HeaderMap,
+    peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
+    Json(input): Json<EnrollRequest>,
+) -> ApiResult<Json<EnrollReply>> {
+    let source = client_address(&headers, peer.map(|p| p.0.0.ip()));
+    Ok(Json(app.enroll(input, &source).await?))
+}
+async fn agent_connect(
+    State(app): State<App>,
+    headers: HeaderMap,
+    peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    let address = client_address(&headers, peer.map(|p| p.0.0.ip()));
+    ws.max_message_size(rig_application::agent::MAX_MESSAGE)
+        .max_frame_size(rig_application::agent::MAX_MESSAGE)
+        .on_upgrade(move |socket| agent_session(app, socket, address))
+}
+fn text(value: Value) -> Message {
+    Message::Text(value.to_string().into())
+}
+async fn agent_session(app: App, socket: WebSocket, address: String) {
+    use std::time::{Duration, Instant};
+    let (mut sink, mut stream) = socket.split();
+    let nonce = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    if sink
+        .send(text(json!({"type":"challenge","nonce":nonce})))
+        .await
+        .is_err()
+    {
+        return;
+    }
+    let auth = tokio::time::timeout(Duration::from_secs(15), async {
+        while let Some(Ok(message)) = stream.next().await {
+            if let Message::Text(body) = message {
+                return serde_json::from_str::<Value>(&body).ok();
+            }
+        }
+        None
+    })
+    .await;
+    let Ok(Some(auth)) = auth else {
+        return;
+    };
+    let machine = match auth["machine"]
+        .as_str()
+        .and_then(|s| s.parse::<Uuid>().ok())
+    {
+        Some(id) => {
+            app.authenticate_agent(id, &nonce, auth["mac"].as_str().unwrap_or(""))
+                .await
+        }
+        None => Err(Error::Unauthorized),
+    };
+    let machine = match machine {
+        Ok(machine) => machine,
+        Err(error) => {
+            tracing::warn!(%error, %address, "agent rejected");
+            let _ = sink
+                .send(text(json!({"type":"error","error":error.to_string()})))
+                .await;
+            let _ = sink.send(Message::Close(None)).await;
+            return;
+        }
+    };
+    let field = |name: &str, limit: usize| -> String {
+        auth[name]
+            .as_str()
+            .unwrap_or("")
+            .chars()
+            .take(limit)
+            .collect()
+    };
+    let (session, mut outgoing) = app.agents.register(AgentStatus {
+        machine_id: machine.id,
+        connected_at: chrono::Utc::now(),
+        version: field("version", 32),
+        hostname: field("hostname", 128),
+        address: Some(address.clone()),
+    });
+    if sink
+        .send(text(
+            json!({"type":"ready","machine":machine.id,"name":machine.name}),
+        ))
+        .await
+        .is_err()
+    {
+        app.agents.unregister(machine.id, session);
+        return;
+    }
+    tracing::info!(machine = %machine.id, name = %machine.name, %address, "agent connected");
+    let mut ping = tokio::time::interval(Duration::from_secs(20));
+    let mut heard = Instant::now();
+    loop {
+        tokio::select! {
+            message = outgoing.recv() => match message {
+                Some(message) => if sink.send(text(message)).await.is_err() { break },
+                // A newer connection of this machine took over.
+                None => break,
+            },
+            incoming = stream.next() => match incoming {
+                Some(Ok(Message::Text(body))) => {
+                    heard = Instant::now();
+                    if let Ok(message) = serde_json::from_str::<Value>(&body) {
+                        app.agents.deliver(machine.id, session, message).await;
+                    }
+                }
+                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                Some(Ok(_)) => heard = Instant::now(),
+            },
+            _ = ping.tick() => {
+                if heard.elapsed() > Duration::from_secs(70)
+                    || sink.send(Message::Ping(Default::default())).await.is_err()
+                {
+                    break;
+                }
+            }
+        }
+    }
+    app.agents.unregister(machine.id, session);
+    let _ = sink.send(Message::Close(None)).await;
+    tracing::info!(machine = %machine.id, "agent disconnected");
 }
 fn cookie(headers: &HeaderMap) -> Option<&str> {
     headers
@@ -535,11 +707,28 @@ async fn miner_log(
             .await?,
     ))
 }
-async fn bmc(
+async fn agents(State(s): State<ApiState>) -> Json<Vec<AgentStatus>> {
+    Json(s.app.agent_statuses())
+}
+async fn enrollment_tokens(State(s): State<ApiState>) -> ApiResult<Json<Vec<EnrollmentToken>>> {
+    Ok(Json(s.app.enrollment_tokens().await?))
+}
+async fn enrollment_token_create(
     State(s): State<ApiState>,
-    Path((id, kind)): Path<(Uuid, String)>,
-) -> ApiResult<Json<Value>> {
-    Ok(Json(s.app.bmc_read(id, &kind).await?))
+    Extension(session): Extension<Session>,
+    Json(input): Json<EnrollmentTokenInput>,
+) -> ApiResult<Json<EnrollmentToken>> {
+    Ok(Json(
+        s.app.create_enrollment_token(&session.actor, input).await?,
+    ))
+}
+async fn enrollment_token_revoke(
+    State(s): State<ApiState>,
+    Extension(session): Extension<Session>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<StatusCode> {
+    s.app.revoke_enrollment_token(&session.actor, id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 async fn audit(State(s): State<ApiState>) -> ApiResult<Json<Vec<AuditEvent>>> {
     Ok(Json(s.app.audit_events().await?))
@@ -643,7 +832,7 @@ async fn terminal(
         return Err(Error::Validation("实例名称无效".into()).into());
     }
     let machine = s.app.machine(id).await?;
-    let credential = s.app.credential(id, false).await?;
+    let credential = s.app.credential(id).await?;
     s.app
         .record_terminal(
             &session.actor,

@@ -1,6 +1,6 @@
 use rig_application::App;
 use rig_domain::*;
-use rig_infrastructure::{adapters, bmc, pg::PgStore, ssh::SshExecutor, vault::Vault};
+use rig_infrastructure::{adapters, pg::PgStore, ssh::SshExecutor, vault::Vault};
 use serde_json::{Value, json};
 use std::sync::{
     Arc, Mutex,
@@ -113,17 +113,16 @@ async fn fresh_snapshot_replaces_privileged_collection_and_delivers_events_and_p
         })
         .unwrap();
     store
-        .save_machine(machine, &input, Some(&secret), None, &actor)
+        .save_machine(machine, &input, Some(&secret), &actor)
         .await
         .unwrap();
     let app = App {
-        bios: None,
         repository: store.clone(),
         vault,
         remote: Arc::new(SshExecutor::default()),
         runtime: rig.clone(),
         adapters: Arc::new(adapters::registry()),
-        bmc: Arc::new(bmc::registry()),
+        agents: Default::default(),
         push: Default::default(),
     };
     let monitor = tokio::spawn(app.clone().run_monitor());

@@ -1,0 +1,22 @@
+# Installed by scripts/native/install.sh --mode public: a controller on a public VPS.
+# Caddy obtains and renews a Let's Encrypt certificate for @HOST@ (DNS must point here and
+# ports 80/443 must be reachable), so rigs can verify the panel when they join and connect.
+{
+    email @EMAIL@
+}
+
+@HOST@ {
+    encode zstd gzip
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy same-origin
+        Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+        -Server
+    }
+    reverse_proxy 127.0.0.1:8080 {
+        # The real client address for login rate limiting (overwrites anything a client sends).
+        header_up Cf-Connecting-Ip {remote_host}
+    }
+}

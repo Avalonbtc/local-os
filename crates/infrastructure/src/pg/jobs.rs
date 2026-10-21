@@ -66,7 +66,7 @@ impl JobRepository for PgStore {
         if !locked {
             return Ok(None);
         }
-        let row=sqlx::query("SELECT to_jsonb(t)-'lease'-'lease_until'-'started_at'-'finished_at' target,j.action,t.status,t.attempts FROM job_targets t JOIN jobs j ON j.id=t.job_id JOIN machines m ON m.id=t.machine_id WHERE m.deleted_at IS NULL AND ((t.status='reconciling' AND (t.retry_at IS NULL OR t.retry_at<=now())) OR (t.status='queued' AND NOT j.cancel_requested AND NOT EXISTS(SELECT 1 FROM machine_locks l WHERE l.machine_id=t.machine_id) AND (NOT m.is_controller OR j.action->>'kind'<>'power' OR NOT EXISTS(SELECT 1 FROM job_targets c WHERE c.job_id=t.job_id AND c.id<>t.id AND c.status NOT IN ('succeeded','failed','cancelled','blocked'))))) ORDER BY CASE WHEN t.status='reconciling' THEN 0 ELSE 1 END,j.created_at,t.ordinal FOR UPDATE OF t SKIP LOCKED LIMIT 1").fetch_optional(&mut *tx).await.map_err(db)?;
+        let row=sqlx::query("SELECT to_jsonb(t)-'lease'-'lease_until'-'started_at'-'finished_at' target,j.action,t.status,t.attempts FROM job_targets t JOIN jobs j ON j.id=t.job_id JOIN machines m ON m.id=t.machine_id WHERE m.deleted_at IS NULL AND ((t.status='reconciling' AND (t.retry_at IS NULL OR t.retry_at<=now())) OR (t.status='queued' AND NOT j.cancel_requested AND NOT EXISTS(SELECT 1 FROM machine_locks l WHERE l.machine_id=t.machine_id))) ORDER BY CASE WHEN t.status='reconciling' THEN 0 ELSE 1 END,j.created_at,t.ordinal FOR UPDATE OF t SKIP LOCKED LIMIT 1").fetch_optional(&mut *tx).await.map_err(db)?;
         let Some(row) = row else { return Ok(None) };
         let target: JobTarget = decode(row.get("target"))?;
         let reconcile = row.get::<String, _>("status") == "reconciling";

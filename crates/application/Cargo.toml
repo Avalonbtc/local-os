@@ -17,5 +17,6 @@ hmac.workspace = true
 flate2.workspace = true
 hex.workspace = true
 base64.workspace = true
+subtle.workspace = true
 futures-util.workspace = true
 

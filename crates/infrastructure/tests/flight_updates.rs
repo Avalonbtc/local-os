@@ -20,7 +20,7 @@ async fn flight_edit_enqueues_snapshot_atomically_and_rejects_stale_edits() {
     let machine = Uuid::new_v4();
     let input: MachineInput = serde_json::from_value(json!({"name":name,"host":"127.0.0.1","port":22,"username":"test","host_key":"SHA256:test","group":"","tags":[],"is_controller":false,"policy":{}})).unwrap();
     store
-        .save_machine(machine, &input, Some("fixture"), None, &actor)
+        .save_machine(machine, &input, Some("fixture"), &actor)
         .await
         .unwrap();
     let wallet = store

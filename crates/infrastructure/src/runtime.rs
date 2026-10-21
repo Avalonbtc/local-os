@@ -280,23 +280,18 @@ impl MinerRuntime for ScreenRuntime {
             r#"set -eu
 test "$(uname -s)" = Linux
 {dependencies}
-install -d -m 700 /var/lib/rigdeck /var/lib/rigdeck/cache
-install -d -m 755 {dir} /hive /var/log/miner
-install -m 755 {temp} {dir}/rig-runtime.py
-ln -sfn {dir} /opt/rigdeck/current.next
-mv -Tf /opt/rigdeck/current.next /opt/rigdeck/current
-printf '%s\n' '#!/bin/sh' 'exec python3 /opt/rigdeck/current/rig-runtime.py "$@"' > /usr/local/bin/rig-miner
-chmod 755 /usr/local/bin/rig-miner
-rm -f {temp}
-printf '%s\n' '[Unit]' 'Description=RigDeck restore desired mining state' 'After=network-online.target' 'Wants=network-online.target' '[Service]' 'Type=oneshot' 'ExecStart=/usr/local/bin/rig-miner recover' 'RemainAfterExit=yes' '[Install]' 'WantedBy=multi-user.target' > /etc/systemd/system/rigdeck-restore.service
-printf '%s\n' '[Unit]' 'Description=RigDeck local statistics and recovery watchdog' 'After=rigdeck-restore.service' '[Service]' 'Type=simple' 'ExecStart=/usr/local/bin/rig-miner watchdog' 'Restart=always' 'RestartSec=5' 'KillMode=process' '[Install]' 'WantedBy=multi-user.target' > /etc/systemd/system/rigdeck-watchdog.service
-systemctl daemon-reload
-systemctl enable rigdeck-restore.service rigdeck-watchdog.service >/dev/null
+{install}
 /usr/local/bin/rig-miner set-reader {reader} >/dev/null
 systemctl restart rigdeck-watchdog.service
+if [ -f /var/lib/rigdeck/agent.json ]; then
+  # Deployed through the agent itself: restart it once this command has answered. A timer
+  # outside the agent's cgroup, so the restart cannot cut itself off.
+  systemd-run --quiet --on-active=3 systemctl restart rigdeck-agent.service
+fi
 /usr/local/bin/rig-miner check
 "#,
             dependencies = DEPENDENCIES,
+            install = install_steps(&dir, &temp),
             reader = shell_quote(&m.username)
         );
         let script_path = format!("/tmp/rigdeck-install-{}.sh", Uuid::new_v4());
@@ -481,6 +476,65 @@ pub fn push_url(controller: std::net::IpAddr, port: u16) -> String {
         std::net::IpAddr::V6(ip) => format!("http://[{ip}]:{port}/ingest/v1/push"),
     }
 }
+/// Shell steps that place a runtime copied to `temp` under `dir`, switch `current` to it
+/// atomically and install the systemd units. Shared by SSH deployment and the one-command
+/// installer.
+fn install_steps(dir: &str, temp: &str) -> String {
+    format!(
+        r#"install -d -m 700 /var/lib/rigdeck /var/lib/rigdeck/cache
+install -d -m 755 {dir} /hive /var/log/miner
+install -m 755 {temp} {dir}/rig-runtime.py
+ln -sfn {dir} /opt/rigdeck/current.next
+mv -Tf /opt/rigdeck/current.next /opt/rigdeck/current
+printf '%s\n' '#!/bin/sh' 'exec python3 /opt/rigdeck/current/rig-runtime.py "$@"' > /usr/local/bin/rig-miner
+chmod 755 /usr/local/bin/rig-miner
+rm -f {temp}
+printf '%s\n' '[Unit]' 'Description=RigDeck restore desired mining state' 'After=network-online.target' 'Wants=network-online.target' '[Service]' 'Type=oneshot' 'ExecStart=/usr/local/bin/rig-miner recover' 'RemainAfterExit=yes' '[Install]' 'WantedBy=multi-user.target' > /etc/systemd/system/rigdeck-restore.service
+printf '%s\n' '[Unit]' 'Description=RigDeck local statistics and recovery watchdog' 'After=rigdeck-restore.service' '[Service]' 'Type=simple' 'ExecStart=/usr/local/bin/rig-miner watchdog' 'Restart=always' 'RestartSec=5' 'KillMode=process' '[Install]' 'WantedBy=multi-user.target' > /etc/systemd/system/rigdeck-watchdog.service
+printf '%s\n' '[Unit]' 'Description=RigDeck agent: keeps the connection to the controller' 'After=network-online.target' 'Wants=network-online.target' 'ConditionPathExists=/var/lib/rigdeck/agent.json' '[Service]' 'Type=simple' 'Environment=HOME=/root' 'ExecStart=/usr/local/bin/rig-miner agent' 'Restart=always' 'RestartSec=5' 'KillMode=process' '[Install]' 'WantedBy=multi-user.target' > /etc/systemd/system/rigdeck-agent.service
+systemctl daemon-reload
+systemctl enable rigdeck-restore.service rigdeck-watchdog.service rigdeck-agent.service >/dev/null"#
+    )
+}
+
+/// `GET /agent/install.sh`: `curl -fsSL <panel>/agent/install.sh | sudo bash -s -- <key>`
+/// installs dependencies and the runtime, joins the farm and starts the agent. Idempotent: run it
+/// again to repair or update a rig; the same hardware (board UUID, NIC MACs) keeps its machine.
+pub fn agent_installer(public_url: &str) -> String {
+    let hash = hex::encode(Sha256::digest(RUNTIME.as_bytes()));
+    let dir = format!("/opt/rigdeck/runtime/{}", &hash[..16]);
+    let panel = shell_quote(public_url.trim_end_matches('/'));
+    format!(
+        r#"#!/bin/bash
+# RigDeck: add this machine to the farm. Usage:
+#   curl -fsSL {public}/agent/install.sh | sudo bash -s -- <install key>
+set -euo pipefail
+PANEL={panel}
+KEY="${{1:-}}"
+if [ -z "$KEY" ]; then echo "用法：curl -fsSL $PANEL/agent/install.sh | sudo bash -s -- <安装密钥>" >&2; exit 2; fi
+if [ "$(id -u)" != 0 ]; then echo "请用 root 或 sudo 运行" >&2; exit 1; fi
+if [ "$(uname -s)" != Linux ] || ! command -v systemctl >/dev/null 2>&1; then echo "需要带 systemd 的 Linux" >&2; exit 1; fi
+echo "==> 安装运行依赖"
+{dependencies}
+echo "==> 下载运行层"
+temp=$(mktemp /tmp/rigdeck-runtime.XXXXXX)
+curl -fsSL --retry 3 "$PANEL/agent/v1/runtime.py" -o "$temp"
+echo "{hash}  $temp" | sha256sum -c --quiet -
+{install}
+echo "==> 加入矿场"
+/usr/local/bin/rig-miner enroll "$PANEL" "$KEY"
+systemctl restart rigdeck-watchdog.service rigdeck-agent.service
+systemctl start rigdeck-restore.service >/dev/null 2>&1 || true
+echo "==> 完成：本机已加入 RigDeck，几秒后会出现在面板的矿机列表里"
+"#,
+        public = public_url.trim_end_matches('/'),
+        dependencies = DEPENDENCIES,
+        install = install_steps(&dir, "\"$temp\""),
+    )
+}
+pub fn runtime_source() -> &'static str {
+    RUNTIME
+}
 /// `cat /proc/uptime snapshot.json` → `{now_uptime, snapshot}`; `None` for anything unexpected.
 pub fn parse_snapshot(stdout: &str) -> Option<Value> {
     let (first, rest) = stdout.split_once('\n')?;
@@ -643,7 +697,7 @@ mod rig_fetch_tests {
         ScreenRuntime::new(rig, std::env::temp_dir().join("rigdeck-unused")).unwrap()
     }
     fn machine() -> Machine {
-        serde_json::from_value(json!({"id":Uuid::nil(),"name":"r","host":"h","port":22,"username":"root","host_key":"k","group":"","tags":[],"is_controller":false,"bmc":null,"policy":{},"created_at":"2026-01-01T00:00:00Z"})).unwrap()
+        serde_json::from_value(json!({"id":Uuid::nil(),"name":"r","host":"h","port":22,"username":"root","host_key":"k","group":"","tags":[],"is_controller":false,"policy":{},"created_at":"2026-01-01T00:00:00Z"})).unwrap()
     }
     const CRED: Credential = Credential::Password {
         password: String::new(),

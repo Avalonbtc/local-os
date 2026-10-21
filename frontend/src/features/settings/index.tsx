@@ -25,6 +25,7 @@ import {
   type AuditEvent,
 } from "../../shared/api";
 import { PageHeader, QueryState } from "../../shared/ui";
+import { InstallKeys } from "../fleet";
 
 /** Farm preferences; the electricity price drives the summary bar's daily cost estimate. */
 function FarmSettingsForm() {
@@ -83,7 +84,7 @@ export function SettingsPage() {
   });
   return (
     <>
-      <PageHeader title="设置" description="矿场、AI 接口、访问令牌与审计记录" />
+      <PageHeader title="设置" description="矿场、安装密钥、AI 接口、访问令牌与审计记录" />
       <Tabs
         activeKey={params.get("tab") ?? "farm"}
         onChange={(tab) => setParams({ tab }, { replace: true })}
@@ -92,6 +93,22 @@ export function SettingsPage() {
             key: "farm",
             label: "矿场",
             children: <FarmSettingsForm />,
+          },
+          {
+            key: "install",
+            label: "安装密钥",
+            children: (
+              <>
+                <Alert
+                  type="info"
+                  showIcon
+                  message="一条命令加入矿机"
+                  description="在矿机上执行安装命令即可自动加入矿场。密钥只能新增矿机；可以按批次设置分组、有效期和台数上限，泄露后随时撤销。"
+                  style={{ marginBottom: 16 }}
+                />
+                <InstallKeys />
+              </>
+            ),
           },
           {
             key: "tokens",

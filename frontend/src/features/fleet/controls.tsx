@@ -18,28 +18,22 @@ import {
   client,
   unwrap,
   useFlights,
-  useMachines,
-  useTelemetry,
   useRefresh,
-  latest,
   data,
   submitJob,
   type Machine,
   type MachineInput,
   type JobInput,
 } from "../../shared/api";
-import { PowerState } from "../../shared/ui";
 
 export function MachineEditor({
   machine,
   open,
   onClose,
-  initialBmcEnabled = false,
 }: {
   machine?: Machine;
   open: boolean;
   onClose: () => void;
-  initialBmcEnabled?: boolean;
 }) {
   const [form] = Form.useForm();
   const [busy, setBusy] = useState(false);
@@ -49,8 +43,8 @@ export function MachineEditor({
   const { message, modal } = App.useApp();
   const refresh = useRefresh();
   const auth = Form.useWatch("auth", form) ?? "password";
-  const bmcEnabled = Form.useWatch("bmc_enabled", form);
-  const bmcProvider = Form.useWatch("bmc_provider", form) ?? "redfish";
+  // One-command machines: the rig reports its own connection; only names, grouping and policy edit.
+  const agent = machine?.transport === "agent";
   const probeHostKey = async (): Promise<string | null> => {
     const version = keyReadVersion.current;
     const values = await form.validateFields(["host", "port"]);
@@ -88,7 +82,7 @@ export function MachineEditor({
   return (
     <Modal
       width={760}
-      title={machine ? "编辑机器" : initialBmcEnabled ? "添加矿机并配置 BMC" : "添加矿机"}
+      title={machine ? "编辑机器" : "通过 SSH 添加矿机"}
       open={open}
       onCancel={() => { keyReadVersion.current++; onClose(); }}
       onOk={() => form.submit()}
@@ -107,11 +101,6 @@ export function MachineEditor({
             port: machine?.port ?? 22,
             username: machine?.username ?? "root",
             tags_text: machine?.tags.join(", "),
-            bmc_enabled: initialBmcEnabled || !!machine?.bmc,
-            bmc_url: machine?.bmc?.url,
-            bmc_user: machine?.bmc?.username,
-            bmc_provider: machine?.bmc?.provider ?? "redfish",
-            ca_pem: machine?.bmc?.ca_pem,
             gpu_temp_limit_c: typeof data(machine?.policy).gpu_temp_limit_c === "number"
               ? data(machine?.policy).gpu_temp_limit_c
               : 85,
@@ -143,13 +132,13 @@ export function MachineEditor({
         onFinish={async (v) => {
           setBusy(true);
           try {
-            const hostKey = v.host_key?.trim() || await probeHostKey();
+            const hostKey = agent ? machine!.host_key : v.host_key?.trim() || await probeHostKey();
             if (!hostKey) return;
             const input: MachineInput = {
               name: v.name,
-              host: v.host.trim(),
-              port: v.port,
-              username: v.username,
+              host: agent ? machine!.host : v.host.trim(),
+              port: agent ? machine!.port : v.port,
+              username: agent ? machine!.username : v.username,
               host_key: hostKey,
               group: v.group ?? "",
               tags: (v.tags_text ?? "")
@@ -157,7 +146,7 @@ export function MachineEditor({
                 .map((s: string) => s.trim())
                 .filter(Boolean),
               is_controller: !!v.is_controller,
-              credential: v.secret
+              credential: !agent && v.secret
                 ? v.auth === "password"
                   ? { kind: "password", password: v.secret, sudo_password: null }
                   : {
@@ -167,18 +156,7 @@ export function MachineEditor({
                       sudo_password: null,
                     }
                 : null,
-              sudo_password: v.sudo_password || null,
-              bmc: v.bmc_enabled
-                ? {
-                    url: v.bmc_url,
-                    username: v.bmc_user,
-                    provider: v.bmc_provider,
-                    ca_pem: v.ca_pem || null,
-                  }
-                : null,
-              bmc_credential: v.bmc_password
-                ? { kind: "password", password: v.bmc_password, sudo_password: null }
-                : null,
+              sudo_password: (!agent && v.sudo_password) || null,
               policy: { ...JSON.parse(v.policy || "{}"), gpu_temp_limit_c: v.gpu_temp_limit_c },
             };
             await unwrap(
@@ -206,6 +184,7 @@ export function MachineEditor({
           <Form.Item name="group" label="分组">
             <AutoComplete options={[{ value: "EPYC 双路" }]} />
           </Form.Item>
+          {!agent && <>
           <Form.Item name="host" label="SSH 地址" rules={[{ required: true }]}>
             <Input placeholder="192.168.1.101" />
           </Form.Item>
@@ -227,7 +206,18 @@ export function MachineEditor({
               ]}
             />
           </Form.Item>
+          </>}
         </div>
+        {agent && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="这台矿机通过安装命令加入，由矿机主动连接面板"
+            description="连接信息由矿机自己上报，这里只修改名称、分组、标签和策略。要重新登记，在矿机上再执行一次安装命令。"
+          />
+        )}
+        {!agent && <>
         <Form.Item
           name="host_key"
           label="SSH 主机指纹（首次自动获取）"
@@ -295,6 +285,7 @@ export function MachineEditor({
           extra="SSH 用户不是 root 且 sudo 要求密码时填写；密码登录通常可留空。编辑机器时留空会保留原设置。">
           <Input.Password autoComplete="new-password" />
         </Form.Item>
+        </>}
         <Form.Item name="tags_text" label="标签（英文逗号分隔）">
           <Input />
         </Form.Item>
@@ -302,51 +293,7 @@ export function MachineEditor({
           <Form.Item name="is_controller" valuePropName="checked">
             <Checkbox>这是主控机器</Checkbox>
           </Form.Item>
-          <Form.Item name="bmc_enabled" valuePropName="checked">
-            <Checkbox>配置 BMC 带外管理</Checkbox>
-          </Form.Item>
         </Space>
-        {bmcEnabled && (
-          <>
-            <div className="form-grid">
-              <Form.Item name="bmc_provider" label="协议">
-                <Select
-                  options={[
-                    { value: "redfish", label: "Redfish" },
-                    { value: "ipmi", label: "IPMI LANplus" },
-                  ]}
-                />
-              </Form.Item>
-              <Form.Item
-                name="bmc_url"
-                label="BMC 地址"
-                rules={[{ required: true }]}
-                extra={bmcProvider === "ipmi"
-                  ? "IPMI LANplus 使用 BMC 主机 IP/域名（UDP 623）；也接受现有的 https:// 地址，并自动提取主机。自定义端口可填 ipmi://地址:端口。"
-                  : "Redfish 请填写 BMC 的 HTTPS 地址。"}
-              >
-                <Input placeholder={bmcProvider === "ipmi" ? "192.168.1.201" : "https://192.168.1.201"} />
-              </Form.Item>
-              <Form.Item
-                name="bmc_user"
-                label="BMC 用户名"
-                rules={[{ required: true }]}
-              >
-                <Input />
-              </Form.Item>
-              <Form.Item
-                name="bmc_password"
-                label={machine?.bmc ? "BMC 密码（留空保留现有）" : "BMC 密码"}
-                rules={[{ required: !machine?.bmc }]}
-              >
-                <Input.Password />
-              </Form.Item>
-            </div>
-            <Form.Item name="ca_pem" label="自签证书 CA（PEM）">
-              <Input.TextArea rows={3} />
-            </Form.Item>
-          </>
-        )}
         <Form.Item name="gpu_temp_limit_c" label="GPU 高温阈值（°C）"
           rules={[{ required: true, message: "请设置 GPU 高温阈值" }]}
           extra="仅用于矿机列表中标记高温 GPU；未采集到 GPU 时不显示温度条。">
@@ -373,16 +320,13 @@ export function BatchModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const flights = useFlights();
-  const machines = useMachines();
-  const telemetry = useTelemetry();
-  const selectedMachines = ids.map((id) => machines.data?.find((machine) => machine.id === id));
   const navigate = useNavigate();
   const { message } = App.useApp();
   const [requestKey] = useState(() => crypto.randomUUID());
   return (
     <Modal
       open
-      title={`${kind === "power" ? "BMC 电源操作" : "批量操作"} · ${ids.length} 台机器`}
+      title={`批量操作 · ${ids.length} 台机器`}
       onCancel={onClose}
       onOk={() => form.submit()}
       okText="创建任务"
@@ -394,7 +338,7 @@ export function BatchModal({
         layout="vertical"
         initialValues={{
           timeout_seconds: 300,
-          operation: kind === "power" ? "on" : "restart",
+          operation: "restart",
         }}
         onFinish={async (v) => {
           setBusy(true);
@@ -418,16 +362,12 @@ export function BatchModal({
                   .map((s: string) => s.trim())
                   .filter(Boolean),
               };
-            else if (kind === "power")
-              action = { kind: "power", operation: v.operation };
             else action = { kind: "bootstrap" };
             await submitJob(
               {
                 machine_ids: ids,
                 action,
-                include_controller: kind === "power"
-                  ? selectedMachines.some((machine) => machine?.is_controller)
-                  : false,
+                include_controller: false,
               },
               requestKey,
             );
@@ -442,22 +382,11 @@ export function BatchModal({
         }}
       >
         {error && <Alert type="error" message={error} showIcon />}
-        {kind === "power" && (
-          <div className="bmc-power-targets">
-            <p>所选机器同时提交电源操作；若包含主控，主控最后执行。</p>
-            {selectedMachines.map((machine, index) => (
-              <div key={ids[index]} className="bmc-power-target">
-                <span>{machine?.name ?? ids[index]}</span>
-                <PowerState observation={latest(telemetry.data, ids[index], "power")} />
-              </div>
-            ))}
-          </div>
-        )}
         {kind === "bootstrap" && (
           <Alert
             type="info"
-            message="通过 SSH 自动部署 screen、运行脚本和本地 watchdog"
-            description="此操作不会启动矿工。目标 Ubuntu 用户需能使用 sudo；需要密码时可在机器设置中填写。"
+            message="部署或更新 screen、运行脚本、本地 watchdog 和 agent"
+            description="此操作不会启动矿工。一键安装的矿机经它们的连接更新；SSH 矿机的用户需能使用 sudo，需要密码时可在机器设置中填写。"
           />
         )}
         {kind === "apply" && (
@@ -495,23 +424,14 @@ export function BatchModal({
             </Form.Item>
           </>
         )}
-        {(kind === "miner" || kind === "power") && (
+        {kind === "miner" && (
           <Form.Item name="operation" label="操作">
             <Select
-              options={(kind === "miner"
-                ? [
-                    ["start", "启动"],
-                    ["stop", "停止"],
-                    ["restart", "重启矿工"],
-                  ]
-                : [
-                    ["on", "开机"],
-                    ["shutdown", "优雅关机"],
-                    ["reboot", "优雅重启"],
-                    ["force_off", "强制断电"],
-                    ["force_restart", "强制重启"],
-                  ]
-              ).map(([value, label]) => ({ value, label }))}
+              options={[
+                ["start", "启动"],
+                ["stop", "停止"],
+                ["restart", "重启矿工"],
+              ].map(([value, label]) => ({ value, label }))}
             />
           </Form.Item>
         )}

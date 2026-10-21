@@ -50,7 +50,7 @@ impl App {
             return Err(Error::Validation("实例名称无效".into()));
         }
         let m = self.repository.machine(machine).await?;
-        let credential = self.credential(machine, false).await?;
+        let credential = self.credential(machine).await?;
         let value = self
             .runtime
             .log_tail(&m, &credential, instance, lines)
@@ -59,8 +59,7 @@ impl App {
             .map_err(|e| Error::Unavailable(format!("运行层响应无效: {e}")))
     }
     pub async fn run_monitor(self) {
-        // Each host/channel has its own cadence. A dead SSH endpoint cannot delay
-        // healthy machines or that machine's independent BMC observations.
+        // One task per machine: a dead endpoint cannot delay healthy machines.
         let mut workers = tokio::task::JoinSet::new();
         let mut handles = std::collections::HashMap::new();
         let maintenance = self.clone();
@@ -88,17 +87,12 @@ impl App {
                     !handle.is_finished()
                 });
                 for machine in machines {
-                    for kind in ["ssh", "power", "sensors", "events"] {
-                        if kind != "ssh" && machine.bmc.is_none() {
-                            continue;
-                        }
-                        handles.entry((machine.id, kind)).or_insert_with(|| {
-                            let app = self.clone();
-                            let id = machine.id;
-                            let sink = sink.clone();
-                            workers.spawn(async move { app.monitor_machine(id, kind, sink).await })
-                        });
-                    }
+                    handles.entry((machine.id, "ssh")).or_insert_with(|| {
+                        let app = self.clone();
+                        let id = machine.id;
+                        let sink = sink.clone();
+                        workers.spawn(async move { app.monitor_machine(id, "ssh", sink).await })
+                    });
                 }
             }
             while workers.try_join_next().is_some() {}
@@ -131,13 +125,7 @@ impl App {
         channel: &str,
         sink: tokio::sync::mpsc::Sender<Observation>,
     ) {
-        let period = match channel {
-            "power" => 30,
-            "sensors" => 60,
-            "events" => 600,
-            _ => 10,
-        };
-        let mut tick = tokio::time::interval(Duration::from_secs(period));
+        let mut tick = tokio::time::interval(Duration::from_secs(10));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut cycle = 0u64;
         // Machine row and decrypted credential change rarely; re-read every minute or after errors
@@ -162,7 +150,7 @@ impl App {
                 cached = match self.repository.machine(id).await {
                     Ok(m) => {
                         let credential = if channel == "ssh" {
-                            self.credential(id, false).await.map_err(|e| e.to_string())
+                            self.credential(id).await.map_err(|e| e.to_string())
                         } else {
                             Err(String::new())
                         };
@@ -178,20 +166,6 @@ impl App {
             let Some((machine, credential)) = cached.as_ref() else {
                 continue;
             };
-            if channel != "ssh" {
-                if machine.bmc.is_none() {
-                    return;
-                }
-                let result = tokio::time::timeout(
-                    Duration::from_secs(if channel == "events" { 120 } else { 50 }),
-                    self.bmc_read(id, channel),
-                )
-                .await
-                .unwrap_or_else(|_| Err(Error::Unavailable("BMC 采集超时".into())));
-                send(&sink, observation(id, channel, result)).await;
-                cycle += 1;
-                continue;
-            }
             let credential = match credential {
                 Ok(credential) => credential,
                 Err(error) => {
@@ -461,35 +435,6 @@ fn summarize(observations: Vec<Observation>) -> Vec<Observation> {
                     "transport",
                 ],
                 "mining" => return Some(observation),
-                "power" => &["state", "power_w"],
-                "sensors" => {
-                    if let Some(items) = observation
-                        .data
-                        .get_mut("items")
-                        .and_then(Value::as_array_mut)
-                    {
-                        items.retain(|item| {
-                            item["raw"]["PowerConsumedWatts"].is_number()
-                                || matches!(
-                                    item["unit"].as_str().unwrap_or("").to_lowercase().as_str(),
-                                    "w" | "watt" | "watts"
-                                )
-                        });
-                        for item in items {
-                            if let Some(object) = item.as_object_mut() {
-                                object.retain(|key, _| {
-                                    ["name", "unit", "reading", "raw"].contains(&key.as_str())
-                                });
-                                if let Some(raw) =
-                                    object.get_mut("raw").and_then(Value::as_object_mut)
-                                {
-                                    raw.retain(|key, _| key == "PowerConsumedWatts");
-                                }
-                            }
-                        }
-                    }
-                    &["items"]
-                }
                 _ => return None,
             };
             if let Some(object) = observation.data.as_object_mut() {
@@ -517,7 +462,7 @@ mod summary_tests {
     use serde_json::json;
 
     #[test]
-    fn summary_excludes_bulk_data_but_preserves_status_and_power_evidence() {
+    fn summary_excludes_bulk_data_and_unknown_kinds() {
         let observed_at = Utc::now();
         let make = |kind: &str, data| Observation {
             machine_id: Uuid::nil(),
@@ -533,26 +478,17 @@ mod summary_tests {
                 json!({"cpu_pct":95,"logical_cpus":256,"gpus":[],"hardware":{"large":true}}),
             ),
             make(
-                "sensors",
-                json!({"raw":"large", "items":[{"name":"temperature","unit":"C","reading":50},{"name":"System Power","unit":"W","reading":500,"raw":{"PowerConsumedWatts":500,"extra":"large"}}]}),
-            ),
-            make(
                 "mining",
                 json!({"instances":[{"stats":{"hashrate_hs":70000}}]}),
             ),
         ]);
-        assert_eq!(result.len(), 3);
+        assert_eq!(result.len(), 2);
         assert!(result[0].data.get("hardware").is_none());
         assert_eq!(result[0].data["logical_cpus"], 256);
         assert_eq!(result[0].error.as_deref(), Some("offline"));
         assert_eq!(result[0].observed_at, observed_at);
-        assert_eq!(result[1].data["items"].as_array().unwrap().len(), 1);
         assert_eq!(
-            result[1].data["items"][0]["raw"],
-            json!({"PowerConsumedWatts":500})
-        );
-        assert_eq!(
-            result[2].data["instances"][0]["stats"]["hashrate_hs"],
+            result[1].data["instances"][0]["stats"]["hashrate_hs"],
             70000
         );
     }

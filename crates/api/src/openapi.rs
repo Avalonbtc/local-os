@@ -31,7 +31,9 @@ fn operation(input: Option<&str>, output: &str, array: bool) -> Value {
 pub fn document() -> Value {
     let mut schemas = Map::new();
     schema::<Login>(&mut schemas, "Login");
-    schema::<BiosSnapshot>(&mut schemas, "BiosSnapshot");
+    schema::<AgentStatus>(&mut schemas, "AgentStatus");
+    schema::<EnrollmentToken>(&mut schemas, "EnrollmentToken");
+    schema::<EnrollmentTokenInput>(&mut schemas, "EnrollmentTokenInput");
     schema::<Session>(&mut schemas, "Session");
     schema::<MessageDismiss>(&mut schemas, "MessageDismiss");
     schema::<Machine>(&mut schemas, "Machine");
@@ -91,8 +93,7 @@ pub fn document() -> Value {
         ("/jobs/{id}", "Job", false),
         ("/telemetry", "Observation", true),
         ("/machines/{id}/history", "Observation", true),
-        ("/machines/{id}/bios", "BiosSnapshot", false),
-        ("/machines/{id}/bmc/{kind}", "Object", false),
+        ("/agents", "AgentStatus", true),
         ("/machines/{id}/messages", "MachineMessage", true),
         ("/machines/{id}/instances/{instance}/log", "MinerLog", false),
         ("/audit", "AuditEvent", true),
@@ -102,6 +103,14 @@ pub fn document() -> Value {
         paths.entry(format!("/api/v1{path}")).or_insert(json!({}))["get"] =
             operation(None, output, array);
     }
+    paths.insert(
+        "/api/v1/enrollment-tokens".into(),
+        json!({"get":operation(None,"EnrollmentToken",true),"post":operation(Some("EnrollmentTokenInput"),"EnrollmentToken",false)}),
+    );
+    paths.insert(
+        "/api/v1/enrollment-tokens/{id}".into(),
+        json!({"delete":{"responses":{"204":{"description":"Revoked"}}}}),
+    );
     paths.insert(
         "/api/v1/settings/farm".into(),
         json!({"get":operation(None,"FarmSettings",false),"put":operation(Some("FarmSettings"),"FarmSettings",false)}),
