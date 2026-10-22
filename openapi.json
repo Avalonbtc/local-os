@@ -1580,6 +1580,11 @@
             "type": "string"
           },
           {
+            "const": "ambiguous",
+            "description": "The pool lists none of this account's machines by name but the wallet is hashing, as\nbehind xmrig-proxy or a pool that names workers otherwise: one machine cannot be told\napart, so this never counts as offline.",
+            "type": "string"
+          },
+          {
             "const": "error",
             "description": "The pool API could not be read; never counts as offline.",
             "type": "string"

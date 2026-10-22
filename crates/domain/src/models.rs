@@ -488,6 +488,10 @@ pub enum PoolCheckResult {
     /// The pool lists the worker without hashrate or recent shares.
     Zero,
     Unsupported,
+    /// The pool lists none of this account's machines by name but the wallet is hashing, as
+    /// behind xmrig-proxy or a pool that names workers otherwise: one machine cannot be told
+    /// apart, so this never counts as offline.
+    Ambiguous,
     /// The pool API could not be read; never counts as offline.
     Error,
 }

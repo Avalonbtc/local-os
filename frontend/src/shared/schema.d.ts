@@ -3524,7 +3524,7 @@ export interface components {
             /** @description Worker name looked for on the pool. */
             worker?: string | null;
         };
-        PoolCheckResult: "unsupported" | "ok" | "missing" | "zero" | "error";
+        PoolCheckResult: "unsupported" | "ok" | "missing" | "zero" | "ambiguous" | "error";
         PoolState: ("online" | "offline") | "unsupported" | "unknown";
         /** ResolveTarget */
         ResolveTarget: {

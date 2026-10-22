@@ -70,7 +70,7 @@ function FarmSettingsForm() {
           <InputNumber min={1} max={1440} precision={0} addonAfter="分钟" style={{ width: "100%" }} />
         </Form.Item>
         <Form.Item name={["alerts", "pool_check"]} label="矿池检测" valuePropName="checked"
-          extra="向矿池的公开接口查询每台矿机的 worker 是否在出算力。支持 supportxmr.com、pool.kryptex.com、hashvault.pro、nanopool.org；自建代理或 IP:端口 的矿池显示「不支持矿池检测」，不会报离线。">
+          extra="向矿池的公开接口查询每台矿机的 worker 是否在出算力。支持 supportxmr.com、pool.kryptex.com、hashvault.pro、nanopool.org；自建代理或 IP:端口 的矿池显示「不支持矿池检测」，不会报离线；经 xmrig-proxy 汇总、矿池上找不到单台 worker 名时只按钱包总算力判断，钱包还有算力就不报。">
           <Switch />
         </Form.Item>
         <Form.Item

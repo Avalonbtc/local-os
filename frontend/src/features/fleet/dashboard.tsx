@@ -286,7 +286,7 @@ export function FleetSummary() {
         <Link
           className="hive-stat hive-stat-link"
           to="/machines?status=pool"
-          title={`矿池侧确认：${poolChecked} 台已核对，${poolUnsupported} 台所在矿池不支持检测（自建代理或 IP:端口）。点击筛选矿池离线的矿机`}
+          title={`矿池侧确认：${poolChecked} 台已核对，${poolUnsupported} 台无法单机检测（自建代理、IP:端口，或经 xmrig-proxy 汇总后矿池只看到一个 worker）。点击筛选矿池离线的矿机`}
         >
           <div className="hive-stat-line">
             <strong className={poolOffline ? "stat-red" : ""}>{statuses.data ? poolOffline : "—"}</strong>

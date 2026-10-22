@@ -80,11 +80,25 @@ pub fn worker_names(login: &str, password: &str) -> Vec<String> {
     names
 }
 
+/// The worker the pool lists this instance under, if any of its names matches.
+pub fn find<'a>(target: &Target, workers: &'a PoolWorkers) -> Option<&'a PoolWorker> {
+    let names = worker_names(&target.login, &target.password);
+    workers
+        .workers
+        .iter()
+        .find(|w| names.iter().any(|n| n.eq_ignore_ascii_case(&w.name)))
+}
+
 /// What one instance's pool says, given the pool answer for its account (if supported).
+/// `names_line_up`: some machine on the same pool account is listed under its own worker name,
+/// so a name the pool does not list really means that worker is gone. Otherwise the names are
+/// not how this pool sees the miners (xmrig-proxy aggregating rigs into its own login, DNS
+/// redirected to a proxy, workers named by password) and only the wallet total is evidence.
 pub fn check(
     target: &Target,
     account: Option<&PoolAccount>,
     answer: Option<&std::result::Result<PoolWorkers, String>>,
+    names_line_up: bool,
     now: DateTime<Utc>,
 ) -> PoolCheck {
     let names = worker_names(&target.login, &target.password);
@@ -138,18 +152,31 @@ pub fn check(
         };
         return result;
     }
-    let found = workers
-        .workers
-        .iter()
-        .find(|w| names.iter().any(|n| n.eq_ignore_ascii_case(&w.name)));
-    match found {
-        None => {
+    let listed = names.join("」或「");
+    match find(target, workers) {
+        None if names_line_up => {
             result.result = PoolCheckResult::Missing;
-            result.message = format!(
-                "{} 上看不到 worker「{}」",
-                account.provider,
-                names.join("」或「")
-            );
+            result.message = format!("{} 上看不到 worker「{listed}」", account.provider);
+        }
+        None => {
+            result.hashrate_hs = workers.total_hs;
+            (result.result, result.message) = match workers.total_hs {
+                Some(rate) if rate > 0.0 => (
+                    PoolCheckResult::Ambiguous,
+                    format!(
+                        "{} 上没有按 worker 名「{listed}」列出这台矿机，但钱包整体有算力：可能经过 xmrig-proxy 等代理汇总，或矿池不按这个名字区分 worker，无法单机确认",
+                        account.provider
+                    ),
+                ),
+                Some(_) => (
+                    PoolCheckResult::Zero,
+                    format!(
+                        "{} 上找不到 worker「{listed}」，这个钱包的总算力也为 0",
+                        account.provider
+                    ),
+                ),
+                None => (PoolCheckResult::Error, "矿池没有返回钱包算力".into()),
+            };
         }
         Some(worker) => {
             result.worker = Some(worker.name.clone());
@@ -238,10 +265,13 @@ pub fn evaluate(e: Evidence) -> (MachineStatus, Vec<NewAlert>) {
                 (state, Some(since), checks)
             } else if ok {
                 (PoolState::Online, None, checks)
-            } else if checks
-                .iter()
-                .all(|c| c.result == PoolCheckResult::Unsupported)
-            {
+            } else if checks.iter().all(|c| {
+                matches!(
+                    c.result,
+                    PoolCheckResult::Unsupported | PoolCheckResult::Ambiguous
+                )
+            }) {
+                // Nothing here can be checked per machine: shown as not supported.
                 (PoolState::Unsupported, None, checks)
             } else {
                 // Only API errors (and unsupported pools): no evidence either way.
@@ -408,6 +438,7 @@ impl App {
             // Instances to ask pools about: deployed and running on a machine that is reporting.
             let now = Utc::now();
             let mut wanted: HashMap<Uuid, Vec<(Target, Option<PoolAccount>)>> = HashMap::new();
+            let mut line_up: HashSet<PoolAccount> = HashSet::new();
             if let (Some(pools), Some((_, deployed))) = (pools, &deployments) {
                 for machine in &machines {
                     let (Some(sample), Some(targets)) =
@@ -461,6 +492,15 @@ impl App {
                     .filter_map(|(_, a)| a.as_ref())
                     .collect();
                 answers.retain(|a, _| used.contains(a));
+                // Accounts where at least one machine is listed under its own worker name.
+                for (target, account) in wanted.values().flatten() {
+                    if let Some(account) = account
+                        && let Some((_, Ok(workers))) = answers.get(account)
+                        && find(target, workers).is_some()
+                    {
+                        line_up.insert(account.clone());
+                    }
+                }
             }
 
             let ids: HashSet<Uuid> = machines.iter().map(|m| m.id).collect();
@@ -479,6 +519,7 @@ impl App {
                                     t,
                                     a.as_ref(),
                                     a.as_ref().and_then(|a| answers.get(a)).map(|(_, r)| r),
+                                    a.as_ref().is_some_and(|a| line_up.contains(a)),
                                     now,
                                 )
                             })
@@ -795,6 +836,7 @@ mod tests {
             &target(&login, "x"),
             Some(&account()),
             hashing.as_ref(),
+            true,
             now,
         );
         assert_eq!(
@@ -806,22 +848,43 @@ mod tests {
             &target(WALLET, "rig01:me@example.com"),
             Some(&account()),
             hashing.as_ref(),
+            true,
             now,
         );
         assert_eq!(result.result, PoolCheckResult::Ok);
         // Rate 0 but a share 2 minutes ago still counts; 10 minutes ago does not.
         let recent = answer(vec![worker("rig01", 0.0, Some(now - D::minutes(2)))]);
         assert_eq!(
-            check(&target(&login, "x"), Some(&account()), recent.as_ref(), now).result,
+            check(
+                &target(&login, "x"),
+                Some(&account()),
+                recent.as_ref(),
+                true,
+                now
+            )
+            .result,
             PoolCheckResult::Ok
         );
         let stale = answer(vec![worker("rig01", 0.0, Some(now - D::minutes(10)))]);
         assert_eq!(
-            check(&target(&login, "x"), Some(&account()), stale.as_ref(), now).result,
+            check(
+                &target(&login, "x"),
+                Some(&account()),
+                stale.as_ref(),
+                true,
+                now
+            )
+            .result,
             PoolCheckResult::Zero
         );
         let other = answer(vec![worker("rig02", 9000.0, None)]);
-        let missing = check(&target(&login, "x"), Some(&account()), other.as_ref(), now);
+        let missing = check(
+            &target(&login, "x"),
+            Some(&account()),
+            other.as_ref(),
+            true,
+            now,
+        );
         assert_eq!(missing.result, PoolCheckResult::Missing);
         assert!(missing.message.contains("rig01"), "{}", missing.message);
         // No worker name at all: judged by the wallet total.
@@ -836,6 +899,7 @@ mod tests {
                 &target(WALLET, "x"),
                 Some(&account()),
                 total(10.0).as_ref(),
+                true,
                 now
             )
             .result,
@@ -846,6 +910,7 @@ mod tests {
                 &target(WALLET, "x"),
                 Some(&account()),
                 total(0.0).as_ref(),
+                true,
                 now
             )
             .result,
@@ -854,20 +919,85 @@ mod tests {
         // Errors and unsupported pools are neutral.
         let failed = Some(Err("HTTP 502".to_owned()));
         assert_eq!(
-            check(&target(&login, "x"), Some(&account()), failed.as_ref(), now).result,
+            check(
+                &target(&login, "x"),
+                Some(&account()),
+                failed.as_ref(),
+                true,
+                now
+            )
+            .result,
             PoolCheckResult::Error
         );
         assert_eq!(
-            check(&target(&login, "x"), Some(&account()), None, now).result,
+            check(&target(&login, "x"), Some(&account()), None, true, now).result,
             PoolCheckResult::Error
         );
         let proxy = Target {
             pool_url: "mac.icuicu.de:6666".into(),
             ..target(&login, "x")
         };
-        let result = check(&proxy, None, None, now);
+        let result = check(&proxy, None, None, true, now);
         assert_eq!(result.result, PoolCheckResult::Unsupported);
         assert!(result.message.contains("不做矿池检测"));
+    }
+
+    #[test]
+    fn unlisted_names_only_count_when_the_account_lists_its_machines_by_name() {
+        // xmrig-proxy in front of the pool (or DNS pointing the pool host at it): the pool
+        // sees one worker named after the proxy's login, never rig01.
+        let now = t0();
+        let login = format!("{WALLET}.rig01");
+        let proxied = |total| {
+            Some(Ok(PoolWorkers {
+                workers: vec![worker("proxy", total, None)],
+                total_hs: Some(total),
+            }))
+        };
+        let result = check(
+            &target(&login, "x"),
+            Some(&account()),
+            proxied(52000.0).as_ref(),
+            false,
+            now,
+        );
+        assert_eq!(result.result, PoolCheckResult::Ambiguous);
+        assert!(result.message.contains("xmrig-proxy"), "{}", result.message);
+        // The whole wallet stopped hashing: the rig's work is not reaching the pool either way.
+        let result = check(
+            &target(&login, "x"),
+            Some(&account()),
+            proxied(0.0).as_ref(),
+            false,
+            now,
+        );
+        assert_eq!(result.result, PoolCheckResult::Zero);
+        assert!(
+            result.message.contains("总算力也为 0"),
+            "{}",
+            result.message
+        );
+        // Once another machine on the account is listed by name, an unlisted name is missing.
+        let result = check(
+            &target(&login, "x"),
+            Some(&account()),
+            proxied(52000.0).as_ref(),
+            true,
+            now,
+        );
+        assert_eq!(result.result, PoolCheckResult::Missing);
+
+        // A machine that can only be judged ambiguously never goes pool-offline.
+        let mut sim = Sim::new();
+        for m in 0..60 {
+            let checks = Some(vec![pool_check(PoolCheckResult::Ambiguous)]);
+            let status = sim.step(D::minutes(m), Some(D::minutes(m)), checks);
+            assert_eq!(
+                (status.pool, status.state),
+                (PoolState::Unsupported, MachineState::Online)
+            );
+        }
+        assert!(sim.alerts.is_empty());
     }
 
     #[test]

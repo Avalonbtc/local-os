@@ -9,8 +9,12 @@ use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 const WALLET: &str = "44AFFq5kSiGBoZ4NMDwYtN18obc8AemS33DBLWs3H7otXft3XjrpDtQGv7SqSsaBYBb98uNbr2VBBEt7f2wfn3RVGQBEP3A";
+/// A wallet whose rigs reach the pool through xmrig-proxy: one aggregated worker, named after
+/// the proxy's own login.
+const PROXIED: &str =
+    "48ProxiedWa11etProxiedWa11etProxiedWa11etProxiedWa11etProxiedWa11etProxiedWa11etProxied";
 
-/// Real pool recognition, canned answers: the pool sees no worker for this wallet.
+/// Real pool recognition, canned answers: nothing for WALLET, one proxy worker for PROXIED.
 #[derive(Default)]
 struct EmptyPool {
     asked: Mutex<Vec<PoolAccount>>,
@@ -22,6 +26,16 @@ impl PoolStats for EmptyPool {
     }
     async fn workers(&self, account: &PoolAccount) -> Result<PoolWorkers> {
         self.asked.lock().unwrap().push(account.clone());
+        if account.wallet == PROXIED {
+            return Ok(PoolWorkers {
+                workers: vec![PoolWorker {
+                    name: "proxy".into(),
+                    hashrate_hs: 52000.0,
+                    last_share_at: Some(Utc::now()),
+                }],
+                total_hs: Some(52000.0),
+            });
+        }
         Ok(PoolWorkers {
             workers: vec![],
             total_hs: Some(0.0),
@@ -64,7 +78,7 @@ async fn statuses_alerts_and_one_evaluation_pass() {
         token_id: None,
     };
     let mut machines = Vec::new();
-    for role in ["pool", "recover", "proxy"] {
+    for role in ["pool", "recover", "proxy", "aggregated"] {
         let id = Uuid::new_v4();
         let input: MachineInput = serde_json::from_value(json!({"name":format!("{role}-{id}"),"host":"127.0.0.1","port":22,"username":"root","host_key":"SHA256:fixture","policy":{}})).unwrap();
         store
@@ -73,11 +87,15 @@ async fn statuses_alerts_and_one_evaluation_pass() {
             .unwrap();
         machines.push(id);
     }
-    let (pool_rig, recovering, proxy_rig) = (machines[0], machines[1], machines[2]);
+    let (pool_rig, recovering, proxy_rig, aggregated) =
+        (machines[0], machines[1], machines[2], machines[3]);
 
     // Statuses round-trip; alerts for an unknown machine are dropped, not a foreign-key error.
     let mut seeded = status(pool_rig, LocalState::Online, PoolState::Online);
     seeded.pool_bad_since = Some(Utc::now() - Duration::minutes(6));
+    // Same history for the proxied rig: it must still not be reported.
+    let mut seeded_proxied = status(aggregated, LocalState::Online, PoolState::Online);
+    seeded_proxied.pool_bad_since = seeded.pool_bad_since;
     let before = store.alerts(None, 1).await.unwrap();
     let baseline = before.last().map_or(0, |a| a.id);
     let alert = |machine, message: &str| NewAlert {
@@ -91,6 +109,7 @@ async fn statuses_alerts_and_one_evaluation_pass() {
         .save_statuses(
             &[
                 seeded.clone(),
+                seeded_proxied,
                 status(recovering, LocalState::Offline, PoolState::Unknown),
                 status(Uuid::new_v4(), LocalState::Online, PoolState::Unknown),
             ],
@@ -150,15 +169,18 @@ async fn statuses_alerts_and_one_evaluation_pass() {
         )
         .await
         .unwrap();
-    let rendered = |url: &str| {
+    let rendered = |url: &str, login: String| {
         json!({"sheet_id":sheet_id,"instances":[{"instance":"xmr","coin":"XMR","environment":{
-            "CUSTOM_TEMPLATE":format!("{WALLET}.rig01"),"CUSTOM_PASS":"x","CUSTOM_URL":url}}]})
+            "CUSTOM_TEMPLATE":login,"CUSTOM_PASS":"x","CUSTOM_URL":url}}]})
     };
     let mut jobs = Vec::new();
-    for (machine, url) in [
-        (pool_rig, "mac.icuicu.de:6666"),
-        (pool_rig, "stratum+ssl://pool.supportxmr.com:443"),
-        (proxy_rig, "mac.icuicu.de:6666"),
+    let supportxmr = "stratum+ssl://pool.supportxmr.com:443";
+    for (machine, url, wallet) in [
+        (pool_rig, "mac.icuicu.de:6666", WALLET),
+        (pool_rig, supportxmr, WALLET),
+        (proxy_rig, "mac.icuicu.de:6666", WALLET),
+        // The rig is configured for SupportXMR, but its traffic goes through xmrig-proxy.
+        (aggregated, supportxmr, PROXIED),
     ] {
         let job = store
             .enqueue(
@@ -168,7 +190,7 @@ async fn statuses_alerts_and_one_evaluation_pass() {
                     idempotency_key: Uuid::new_v4().to_string(),
                     include_controller: false,
                 },
-                &json!({"kind":"apply","snapshot":{"hosts":{machine.to_string():rendered(url)}}}),
+                &json!({"kind":"apply","snapshot":{"hosts":{machine.to_string():rendered(url, format!("{wallet}.rig01"))}}}),
                 &actor,
             )
             .await
@@ -251,7 +273,9 @@ async fn statuses_alerts_and_one_evaluation_pass() {
         "{raised:#?}"
     );
     assert!(
-        raised[0].message.contains("看不到 worker「rig01」"),
+        raised[0]
+            .message
+            .contains("找不到 worker「rig01」，这个钱包的总算力也为 0"),
         "{}",
         raised[0].message
     );
@@ -264,6 +288,13 @@ async fn statuses_alerts_and_one_evaluation_pass() {
         Some("supportxmr")
     );
     assert_eq!(of(recovering).state, MachineState::Online);
+    // Proxied: the pool only lists the proxy, but the wallet hashes: no per-rig verdict.
+    assert_eq!(of(aggregated).state, MachineState::Online);
+    assert_eq!(of(aggregated).pool, PoolState::Unsupported);
+    assert_eq!(
+        of(aggregated).pool_checks[0].result,
+        PoolCheckResult::Ambiguous
+    );
     assert_eq!(of(proxy_rig).pool, PoolState::Unsupported);
     assert_eq!(
         of(proxy_rig).pool_checks[0].result,
@@ -276,6 +307,7 @@ async fn statuses_alerts_and_one_evaluation_pass() {
         1,
         "{asked:?}"
     );
+    assert_eq!(asked.iter().filter(|a| a.wallet == PROXIED).count(), 1);
     assert!(asked.iter().all(|a| a.provider == "supportxmr"));
 
     // No worker claims these; leave nothing queued for tests sharing the database.
