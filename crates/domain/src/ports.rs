@@ -361,4 +361,7 @@ pub trait PoolStats: Send + Sync {
     /// pool (own proxy, bare IP:port, unknown host or coin) has no supported API.
     fn account(&self, url: &str, coin: &str, login: &str) -> Option<PoolAccount>;
     async fn workers(&self, account: &PoolAccount) -> Result<PoolWorkers>;
+    /// Rigs connected to the xmrig-proxy whose HTTP API is at `url`, and whether the proxy
+    /// itself reaches its pool.
+    async fn proxy_workers(&self, url: &str, token: Option<&str>) -> Result<PoolWorkers>;
 }

@@ -27,7 +27,7 @@
 | `/api/v1/machines/{id}/history` | kind、hours 历史查询 |
 | `/api/v1/machines/{id}/bmc/{kind}` | power、sensors、events |
 | `/api/v1/audit`、`/tokens` | 操作记录、令牌管理 |
-| `/api/v1/settings/farm` | 矿场设定（电价，用于预估日电费；`alerts` 为离线通知阈值与开关）；`GET` 读取，`PUT` 保存 |
+| `/api/v1/settings/farm` | 矿场设定（电价，用于预估日电费；`alerts` 为离线通知阈值、开关和自建 xmrig-proxy；代理令牌只写不读，读取时为 `has_token`）；`GET` 读取，`PUT` 保存 |
 | `/api/v1/status` | 每台矿机的在线判定：`online`、`local_offline`、`pool_offline`，以及矿池检测明细 |
 | `/api/v1/alerts` | 离线/恢复通知，id 递增。`after=<id>` 取之后的新通知（从旧到新），不带 `after` 取最新 `limit` 条；App 推送可按同样方式轮询 |
 | `/api/v1/openapi.json` | 运行时生成 OpenAPI 3.1 |

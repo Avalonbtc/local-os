@@ -28,6 +28,12 @@
 
 - 钱包和 worker 名取自这台矿机当前部署的飞行表渲染结果（`deployment_versions` 里展开后的 `CUSTOM_TEMPLATE`、`CUSTOM_PASS`、`CUSTOM_URL` 第一条），和矿工实际登录用的一致。worker 名同时认登录名里 `.` 或 `/` 后面的部分（Kryptex、Nanopool 的写法，例如 `%WAL%.%WORKER_NAME%`）和矿池密码（SupportXMR、HashVault 用密码当 worker 名，`x` 表示没设），不区分大小写。都没有时按整个钱包的算力判断。
 - xmrig-proxy 等代理汇总：矿池只看到代理自己的登录名，看不到每台矿机。飞行表填的是代理地址时，按上一条直接标为不支持；飞行表填的是受支持的矿池、实际流量却经过代理（hosts/DNS 指向代理、透明转发），或矿池按别的名字区分 worker 时，靠下面这条规则避免误报：同一个矿池账户（钱包）里只要有一台矿机能按自己的 worker 名找到，找不到的名字才算「看不到 worker」；一台都对不上时只看钱包总算力——钱包还有算力就标为「无法单机确认」（面板里计入不支持检测，不报离线），钱包总算力为 0 才算矿池离线（这时确实没有算力到达矿池）。仍会误报的情况：同一个钱包里一部分矿机直连矿池、按名字能找到，另一部分在飞行表里也写矿池地址却实际经代理汇总。这种情况请给经代理的矿机在飞行表里填代理地址。
+- 自建 xmrig-proxy：在 设定 → 矿场 → 自建 xmrig-proxy 里填「飞行表里的矿池地址」（如 `mac.icuicu.de:6666`，不写端口则匹配该主机所有端口）和代理的 HTTP API 地址（代理配置里 `"http": {"enabled": true, "host": "0.0.0.0", "port": 4048, "access-token": "…"}`），有 access-token 一并填写。飞行表矿池地址匹配的矿机改为查这个代理：
+  - 每 2 分钟请求一次 `GET /1/summary` 和 `GET /1/workers`（带 `Authorization: Bearer <token>`）。workers 每项是 `[名字, IP, 连接数, 接受, 拒绝, 无效, 总哈希, 最后份额(毫秒), 1分钟, 10分钟, 1小时, 12小时, 24小时算力(kH/s)]`，格式按 xmrig-proxy 源码 `ApiRouter::getWorkers` 核对。
+  - 矿机按名字匹配：代理默认 `rig_id` 模式下，没设 `--rig-id` 的矿工（RigDeck 不设）列为完整登录名 `钱包.rig01`；也认 worker 名、机器名，以及 `ip` 模式下的 SSH 地址。用 1 分钟算力或 5 分钟内的份额判断是否在出算力。
+  - `rig_id`、`user` 模式下代理列出每台矿工，名字确定，所以看不到某台矿机的登录名就算「看不到 worker」，即使这台代理上只有它一台 RigDeck 矿机。`password`（常是 `x`）、`agent`、`ip` 模式只在同一代理上有其他 RigDeck 矿机按名字对上时才这样认，否则按上一条只看代理总算力。
+  - `upstreams.active` 为 0（代理连不上上游矿池）时，经它的所有矿机都算矿池离线。
+  - 访问令牌用主密钥加密后存进矿场设定，接口和审计记录里都只有密文或「已保存」，读取时只返回 `has_token`；表单里留空表示不改。
 - 其他矿池，包括自建代理（如 `mac.icuicu.de:6666`）、`IP:端口`、未知域名、Kryptex 的 `krx…` 用户名，都标为「不支持矿池检测」，不会报矿池离线。
 - 同一个钱包在同一矿池只查一次，结果缓存 2 分钟；1000 台矿机用同一个钱包时也是每 2 分钟一个请求。请求超时 20 秒。
 
@@ -43,8 +49,8 @@
 
 ## 验证
 
-- Rust 单元测试 `status::tests`：本地离线阈值与只通知一次、恢复、迟到的旧样本不算恢复、主控重启后重新计时、矿池离线防抖与中途 API 报错、单次正常读数重置、不支持的矿池从不通知、本地离线冻结矿池结论、worker 名匹配（登录名后缀、密码、大小写、份额时间窗、钱包总算力）、xmrig-proxy 汇总时不报离线（钱包有算力为「无法单机确认」，钱包为 0 才算离线，同账户有机器按名字对上时才认「看不到 worker」）、部署解析。`pools::tests`：四个矿池的识别和反例（自建代理、IP:端口、仿冒域名、非 XMR）、钱包解析、四种返回格式（按 2026-10-22 实际返回裁剪）。`settings::tests`：旧设定缺 `alerts` 时电价保留、阈值范围。
+- Rust 单元测试 `status::tests`：本地离线阈值与只通知一次、恢复、迟到的旧样本不算恢复、主控重启后重新计时、矿池离线防抖与中途 API 报错、单次正常读数重置、不支持的矿池从不通知、本地离线冻结矿池结论、worker 名匹配（登录名后缀、密码、大小写、份额时间窗、钱包总算力）、xmrig-proxy 汇总时不报离线（钱包有算力为「无法单机确认」，钱包为 0 才算离线，同账户有机器按名字对上时才认「看不到 worker」）、部署解析。`pools::tests`：xmrig-proxy 的 `/1/summary`、`/1/workers` 解析（kH/s 换算、毫秒时间、上游断开、`none`/`password` 模式），四个矿池的识别和反例（自建代理、IP:端口、仿冒域名、非 XMR）、钱包解析、四种返回格式（按 2026-10-22 实际返回裁剪）。`settings::tests`：旧设定缺 `alerts` 时电价保留、阈值范围、代理条目校验（地址、http(s) API、重复）。`status::tests` 另有：代理按完整登录名/IP 匹配、唯一一台 RigDeck 矿机从 `rig_id` 模式的代理上消失仍判「看不到 worker」、代理上游断开判离线、飞行表地址与代理地址的匹配规则。
 - `pools::tests::live_pool_apis_parse`（`--ignored`，需联网）：对四个真实接口各请求一次，全部解析成功。
-- PostgreSQL 集成测试 `machine_status`：状态往返、未知机器的通知被跳过、`after`/`limit` 顺序、当前部署取最新一次；起真实的 `run_status`，用假矿池接口验证一次矿池离线通知、一次本地恢复通知、自建代理标为不支持、配置为 SupportXMR 但经 xmrig-proxy 汇总的矿机（矿池只列出 `proxy`）带着 6 分钟的坏读数历史也不报离线、第二轮不重复通知、同一钱包只请求一次。其余集成测试（`postgres`、`job_dispatch`、`telemetry_push`、`telemetry_batch`、`snapshot_monitor`、`flight_updates`、`machine_batch`、`resilience`）在新库上通过。环境是 WSL 里的 PostgreSQL 14，与 CI 的 18 不同。
+- PostgreSQL 集成测试 `machine_status`：状态往返、未知机器的通知被跳过、`after`/`limit` 顺序、当前部署取最新一次；起真实的 `run_status`，用假矿池接口验证一次矿池离线通知、一次本地恢复通知、自建代理标为不支持、配置为 SupportXMR 但经 xmrig-proxy 汇总的矿机（矿池只列出 `proxy`）带着 6 分钟的坏读数历史也不报离线、经自建 xmrig-proxy（149.104.4.41:8888）的矿机从代理上消失、6 分钟后报矿池离线，代理只被请求一次且带上了令牌；令牌保存后数据库里没有明文、客户端伪造的密文被忽略、读取只返回已保存、再次保存留空不丢令牌；第二轮不重复通知、同一钱包只请求一次。其余集成测试（`postgres`、`job_dispatch`、`telemetry_push`、`telemetry_batch`、`snapshot_monitor`、`flight_updates`、`machine_batch`、`resilience`）在新库上通过。环境是 WSL 里的 PostgreSQL 14，与 CI 的 18 不同。
 - 端到端：WSL 里启动真实 `rigdeck serve`，添加一台连不上的矿机，2 分钟后 `/api/v1/alerts` 出现一条本地离线通知，已打开的控制台右下角弹出「矿机离线 · rig-test-01」，之后不再重复；设定页离线通知表单读出默认值，保存后 `/api/v1/settings/farm` 返回新阈值。
-- 没有在真实矿机和真实矿池账户上验证矿池离线（矿池部分用真实接口的返回格式和假矿池接口的集成测试覆盖）。
+- 没有在真实矿机和真实矿池账户上验证矿池离线（矿池部分用真实接口的返回格式和假矿池接口的集成测试覆盖）；也没有连真实的 xmrig-proxy，返回格式按其源码构造。

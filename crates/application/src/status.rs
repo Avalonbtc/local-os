@@ -18,13 +18,17 @@ const POOL_REFRESH: Duration = Duration::from_secs(120);
 const DEPLOYMENT_REFRESH: Duration = Duration::from_secs(60);
 
 /// One miner instance as deployed: where it mines and with which login.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Target {
     pub instance: String,
     pub pool_url: String,
     pub coin: String,
     pub login: String,
     pub password: String,
+    /// `%WORKER_NAME%` (the machine name).
+    pub worker_name: String,
+    /// The machine's SSH address; an xmrig-proxy in `ip` mode names rigs by address.
+    pub host: String,
 }
 /// Rendered instances of a deployment snapshot (`environment` holds the expanded templates).
 pub fn targets(deployment: &Value) -> Vec<Target> {
@@ -46,6 +50,8 @@ pub fn targets(deployment: &Value) -> Vec<Target> {
                 coin: text(&item["coin"]),
                 login: text(&env["CUSTOM_TEMPLATE"]),
                 password: text(&env["CUSTOM_PASS"]),
+                worker_name: text(&env["WORKER_NAME"]),
+                host: String::new(),
             }
         })
         .collect()
@@ -80,61 +86,110 @@ pub fn worker_names(login: &str, password: &str) -> Vec<String> {
     names
 }
 
-/// The worker the pool lists this instance under, if any of its names matches.
-pub fn find<'a>(target: &Target, workers: &'a PoolWorkers) -> Option<&'a PoolWorker> {
-    let names = worker_names(&target.login, &target.password);
+/// Where an instance's pool-side evidence comes from.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Source {
+    /// A public pool API, per wallet.
+    Pool(PoolAccount),
+    /// One of the user's xmrig-proxy instances, by API URL.
+    Proxy(String),
+}
+impl Source {
+    fn label(&self) -> &str {
+        match self {
+            Source::Pool(account) => &account.provider,
+            Source::Proxy(_) => "xmrig-proxy",
+        }
+    }
+}
+
+/// Names the source may list this instance under. An xmrig-proxy names rigs by its `workers`
+/// mode: rig-id (RigDeck sets none, so the proxy falls back to the full login), login,
+/// password or IP; a pool only sees the worker part.
+fn candidates(target: &Target, source: &Source) -> Vec<String> {
+    let mut names = worker_names(&target.login, &target.password);
+    if matches!(source, Source::Proxy(_)) {
+        for extra in [&target.login, &target.worker_name, &target.host] {
+            let extra = extra.trim();
+            if !extra.is_empty() && !names.iter().any(|n| n.eq_ignore_ascii_case(extra)) {
+                names.push(extra.to_owned());
+            }
+        }
+    }
+    names
+}
+
+/// The worker the source lists this instance under, if any of its names matches.
+pub fn find<'a>(
+    target: &Target,
+    source: &Source,
+    workers: &'a PoolWorkers,
+) -> Option<&'a PoolWorker> {
+    let names = candidates(target, source);
     workers
         .workers
         .iter()
         .find(|w| names.iter().any(|n| n.eq_ignore_ascii_case(&w.name)))
 }
 
-/// What one instance's pool says, given the pool answer for its account (if supported).
-/// `names_line_up`: some machine on the same pool account is listed under its own worker name,
-/// so a name the pool does not list really means that worker is gone. Otherwise the names are
-/// not how this pool sees the miners (xmrig-proxy aggregating rigs into its own login, DNS
-/// redirected to a proxy, workers named by password) and only the wallet total is evidence.
+/// What one instance's pool (or xmrig-proxy) says, given the answer for its source.
+/// `names_line_up`: some machine on the same source is listed under its own worker name, so a
+/// name it does not list really means that worker is gone. Otherwise the names are not how this
+/// source sees the miners (xmrig-proxy aggregating rigs into its own login, DNS redirected to a
+/// proxy, workers named by password) and only the total is evidence. A source that says its
+/// names are exact (`PoolWorkers::exact_names`) counts as lining up on its own.
 pub fn check(
     target: &Target,
-    account: Option<&PoolAccount>,
+    source: Option<&Source>,
     answer: Option<&std::result::Result<PoolWorkers, String>>,
     names_line_up: bool,
     now: DateTime<Utc>,
 ) -> PoolCheck {
-    let names = worker_names(&target.login, &target.password);
+    let names = source.map(|s| candidates(target, s)).unwrap_or_default();
     let mut result = PoolCheck {
         instance: target.instance.clone(),
         pool_url: Some(target.pool_url.clone()).filter(|u| !u.is_empty()),
-        provider: account.map(|a| a.provider.clone()),
+        provider: source.map(|s| s.label().to_owned()),
         worker: names.first().cloned(),
         result: PoolCheckResult::Unsupported,
         hashrate_hs: None,
         last_share_at: None,
         message: String::new(),
     };
-    let Some(account) = account else {
+    let Some(source) = source else {
         result.message = if target.pool_url.is_empty() {
             "未配置矿池地址，不做矿池检测".into()
         } else {
-            "该矿池没有可用的矿工接口（自建代理或未支持的矿池），不做矿池检测".into()
+            "该矿池没有可用的矿工接口（自建代理或未支持的矿池），不做矿池检测；自建的 xmrig-proxy 可在设定里填写它的 API 地址".into()
         };
         return result;
     };
+    let label = source.label();
     let workers = match answer {
         None => {
             result.result = PoolCheckResult::Error;
-            result.message = "等待矿池接口首次返回".into();
+            result.message = format!("等待 {label} 接口首次返回");
             return result;
         }
         Some(Err(error)) => {
             result.result = PoolCheckResult::Error;
-            result.message = format!("读取矿池接口失败：{error}");
+            result.message = format!("读取 {label} 接口失败：{error}");
             return result;
         }
         Some(Ok(workers)) => workers,
     };
+    let names_line_up = names_line_up || workers.exact_names;
+    if workers.upstream_down {
+        result.result = PoolCheckResult::Zero;
+        result.message = "xmrig-proxy 没有连上上游矿池，经它的算力都到不了矿池".into();
+        return result;
+    }
     let hashing = |rate: f64, share: Option<DateTime<Utc>>| {
         rate > 0.0 || share.is_some_and(|s| now - s <= SHARE_WINDOW)
+    };
+    let whole = match source {
+        Source::Proxy(_) => "代理",
+        Source::Pool(_) => "钱包",
     };
     if names.is_empty() {
         // No worker name: the pool can only tell us about the wallet as a whole.
@@ -146,17 +201,21 @@ pub fn check(
             ),
             Some(_) => (
                 PoolCheckResult::Zero,
-                format!("{} 上这个钱包的算力为 0", account.provider),
+                format!("{label} 上这个钱包的算力为 0"),
             ),
             None => (PoolCheckResult::Error, "矿池没有返回钱包算力".into()),
         };
         return result;
     }
-    let listed = names.join("」或「");
-    match find(target, workers) {
+    // Messages name the short worker name the user wrote, not the full wallet login.
+    let listed = worker_names(&target.login, &target.password)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| names[0].clone());
+    match find(target, source, workers) {
         None if names_line_up => {
             result.result = PoolCheckResult::Missing;
-            result.message = format!("{} 上看不到 worker「{listed}」", account.provider);
+            result.message = format!("{label} 上看不到 worker「{listed}」");
         }
         None => {
             result.hashrate_hs = workers.total_hs;
@@ -164,18 +223,14 @@ pub fn check(
                 Some(rate) if rate > 0.0 => (
                     PoolCheckResult::Ambiguous,
                     format!(
-                        "{} 上没有按 worker 名「{listed}」列出这台矿机，但钱包整体有算力：可能经过 xmrig-proxy 等代理汇总，或矿池不按这个名字区分 worker，无法单机确认",
-                        account.provider
+                        "{label} 上没有按 worker 名「{listed}」列出这台矿机，但{whole}整体有算力：可能经过 xmrig-proxy 等代理汇总，或不按这个名字区分 worker，无法单机确认"
                     ),
                 ),
                 Some(_) => (
                     PoolCheckResult::Zero,
-                    format!(
-                        "{} 上找不到 worker「{listed}」，这个钱包的总算力也为 0",
-                        account.provider
-                    ),
+                    format!("{label} 上找不到 worker「{listed}」，这个{whole}的总算力也为 0"),
                 ),
-                None => (PoolCheckResult::Error, "矿池没有返回钱包算力".into()),
+                None => (PoolCheckResult::Error, format!("{label} 没有返回总算力")),
             };
         }
         Some(worker) => {
@@ -183,16 +238,13 @@ pub fn check(
             result.hashrate_hs = Some(worker.hashrate_hs);
             result.last_share_at = worker.last_share_at;
             (result.result, result.message) = if hashing(worker.hashrate_hs, worker.last_share_at) {
-                (
-                    PoolCheckResult::Ok,
-                    format!("{} 已看到算力", account.provider),
-                )
+                (PoolCheckResult::Ok, format!("{label} 已看到算力"))
             } else {
                 (
                     PoolCheckResult::Zero,
                     format!(
-                        "{} 上 worker「{}」算力为 0，最近没有提交份额",
-                        account.provider, worker.name
+                        "{label} 上 worker「{}」算力为 0，最近没有提交份额",
+                        worker.name
                     ),
                 )
             };
@@ -395,13 +447,14 @@ impl App {
                 }
             }
         };
-        let mut answers: HashMap<PoolAccount, PoolAnswer> = HashMap::new();
+        let mut answers: HashMap<Source, PoolAnswer> = HashMap::new();
         let mut deployments: Option<(tokio::time::Instant, HashMap<Uuid, Vec<Target>>)> = None;
         let mut tick = tokio::time::interval(Duration::from_secs(10));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tick.tick().await;
-            let settings = self.farm_settings().await.unwrap_or_default().alerts;
+            // Stored form: proxy tokens are needed (decrypted only when a proxy is asked).
+            let settings = self.stored_farm_settings().await.unwrap_or_default().alerts;
             let (Ok(machines), Ok(latest)) = (
                 self.repository.machines().await,
                 self.repository.latest_summary(None).await,
@@ -437,8 +490,8 @@ impl App {
             }
             // Instances to ask pools about: deployed and running on a machine that is reporting.
             let now = Utc::now();
-            let mut wanted: HashMap<Uuid, Vec<(Target, Option<PoolAccount>)>> = HashMap::new();
-            let mut line_up: HashSet<PoolAccount> = HashSet::new();
+            let mut wanted: HashMap<Uuid, Vec<(Target, Option<Source>)>> = HashMap::new();
+            let mut line_up: HashSet<Source> = HashSet::new();
             if let (Some(pools), Some((_, deployed))) = (pools, &deployments) {
                 for machine in &machines {
                     let (Some(sample), Some(targets)) =
@@ -457,11 +510,25 @@ impl App {
                     let list = targets
                         .iter()
                         .filter(|t| alive.contains(&t.instance))
-                        .map(|t| (t.clone(), pools.account(&t.pool_url, &t.coin, &t.login)))
+                        .map(|t| {
+                            // A configured xmrig-proxy wins over pool recognition.
+                            let source =
+                                match settings.proxies.iter().find(|p| p.serves(&t.pool_url)) {
+                                    Some(proxy) => Some(Source::Proxy(proxy.api_url.clone())),
+                                    None => pools
+                                        .account(&t.pool_url, &t.coin, &t.login)
+                                        .map(Source::Pool),
+                                };
+                            let target = Target {
+                                host: machine.host.clone(),
+                                ..t.clone()
+                            };
+                            (target, source)
+                        })
                         .collect();
                     wanted.insert(machine.id, list);
                 }
-                let due: HashSet<PoolAccount> = wanted
+                let due: HashSet<Source> = wanted
                     .values()
                     .flatten()
                     .filter_map(|(_, a)| a.clone())
@@ -471,22 +538,41 @@ impl App {
                             .is_none_or(|(at, _)| at.elapsed() >= POOL_REFRESH)
                     })
                     .collect();
-                let fetched =
-                    futures_util::future::join_all(due.into_iter().map(|account| async move {
-                        let result =
-                            tokio::time::timeout(Duration::from_secs(20), pools.workers(&account))
-                                .await
-                                .unwrap_or_else(|_| Err(Error::Unavailable("矿池接口超时".into())));
-                        (account, result.map_err(|e| e.to_string()))
-                    }))
-                    .await;
-                for (account, result) in fetched {
-                    if let Err(error) = &result {
-                        tracing::warn!(%error, pool = %account.provider, "pool worker stats not read");
+                let token = |url: &str| {
+                    settings
+                        .proxies
+                        .iter()
+                        .find(|p| p.api_url == url)
+                        .and_then(|p| self.proxy_token(p))
+                };
+                let fetched = futures_util::future::join_all(due.into_iter().map(|source| {
+                    let token = match &source {
+                        Source::Proxy(url) => token(url),
+                        Source::Pool(_) => None,
+                    };
+                    async move {
+                        let request = async {
+                            match &source {
+                                Source::Pool(account) => pools.workers(account).await,
+                                Source::Proxy(url) => {
+                                    pools.proxy_workers(url, token.as_deref()).await
+                                }
+                            }
+                        };
+                        let result = tokio::time::timeout(Duration::from_secs(20), request)
+                            .await
+                            .unwrap_or_else(|_| Err(Error::Unavailable("接口超时".into())));
+                        (source, result.map_err(|e| e.to_string()))
                     }
-                    answers.insert(account, (tokio::time::Instant::now(), result));
+                }))
+                .await;
+                for (source, result) in fetched {
+                    if let Err(error) = &result {
+                        tracing::warn!(%error, source = %source.label(), "pool worker stats not read");
+                    }
+                    answers.insert(source, (tokio::time::Instant::now(), result));
                 }
-                let used: HashSet<&PoolAccount> = wanted
+                let used: HashSet<&Source> = wanted
                     .values()
                     .flatten()
                     .filter_map(|(_, a)| a.as_ref())
@@ -496,7 +582,7 @@ impl App {
                 for (target, account) in wanted.values().flatten() {
                     if let Some(account) = account
                         && let Some((_, Ok(workers))) = answers.get(account)
-                        && find(target, workers).is_some()
+                        && find(target, account, workers).is_some()
                     {
                         line_up.insert(account.clone());
                     }
@@ -577,14 +663,15 @@ mod tests {
             coin: "XMR".into(),
             login: login.into(),
             password: password.into(),
+            ..Default::default()
         }
     }
-    fn account() -> PoolAccount {
-        PoolAccount {
+    fn account() -> Source {
+        Source::Pool(PoolAccount {
             provider: "supportxmr".into(),
             coin: "xmr".into(),
             wallet: WALLET.into(),
-        }
+        })
     }
     fn worker(name: &str, rate: f64, share: Option<DateTime<Utc>>) -> PoolWorker {
         PoolWorker {
@@ -828,6 +915,8 @@ mod tests {
             Some(Ok(PoolWorkers {
                 workers,
                 total_hs: Some(7000.0),
+                upstream_down: false,
+                exact_names: false,
             }))
         };
         let hashing = answer(vec![worker("RIG01", 7000.0, None)]);
@@ -892,6 +981,8 @@ mod tests {
             Some(Ok(PoolWorkers {
                 workers: vec![],
                 total_hs: Some(rate),
+                upstream_down: false,
+                exact_names: false,
             }))
         };
         assert_eq!(
@@ -952,6 +1043,8 @@ mod tests {
             Some(Ok(PoolWorkers {
                 workers: vec![worker("proxy", total, None)],
                 total_hs: Some(total),
+                upstream_down: false,
+                exact_names: false,
             }))
         };
         let result = check(
@@ -998,6 +1091,114 @@ mod tests {
             );
         }
         assert!(sim.alerts.is_empty());
+    }
+
+    #[test]
+    fn xmrig_proxy_lists_rigs_by_full_login_or_address_and_reports_a_dead_upstream() {
+        let now = t0();
+        let proxy = Source::Proxy("http://mac.icuicu.de:4048".into());
+        let rig = Target {
+            pool_url: "mac.icuicu.de:6666".into(),
+            worker_name: "rig01".into(),
+            host: "192.168.1.21".into(),
+            ..target(&format!("{WALLET}.rig01"), "x")
+        };
+        let answer = |workers: Vec<PoolWorker>, upstream_down| {
+            Some(Ok(PoolWorkers {
+                total_hs: Some(workers.iter().map(|w| w.hashrate_hs).sum()),
+                workers,
+                upstream_down,
+                exact_names: false,
+            }))
+        };
+        // Default `rig_id` mode without --rig-id: the proxy lists the miner's full login.
+        let by_login = answer(
+            vec![worker(&format!("{WALLET}.rig01"), 7600.0, Some(now))],
+            false,
+        );
+        let result = check(&rig, Some(&proxy), by_login.as_ref(), true, now);
+        assert_eq!(result.result, PoolCheckResult::Ok);
+        assert_eq!(result.provider.as_deref(), Some("xmrig-proxy"));
+        // `ip` mode: listed by address.
+        let by_ip = answer(
+            vec![worker("192.168.1.21", 0.0, Some(now - D::minutes(12)))],
+            false,
+        );
+        let result = check(&rig, Some(&proxy), by_ip.as_ref(), true, now);
+        assert_eq!(result.result, PoolCheckResult::Zero);
+        assert!(
+            result
+                .message
+                .contains("xmrig-proxy 上 worker「192.168.1.21」算力为 0"),
+            "{}",
+            result.message
+        );
+        // Another rig is listed by name, this one is gone from the proxy.
+        let other = answer(
+            vec![worker(&format!("{WALLET}.rig02"), 7600.0, Some(now))],
+            false,
+        );
+        let result = check(&rig, Some(&proxy), other.as_ref(), true, now);
+        assert_eq!(result.result, PoolCheckResult::Missing);
+        assert!(
+            result
+                .message
+                .contains("xmrig-proxy 上看不到 worker「rig01」"),
+            "{}",
+            result.message
+        );
+        // Only rig on its proxy (no other machine to line names up with): the proxy's rig_id
+        // mode lists every miner by full login, so an absent login is still missing.
+        let exact = Some(Ok(PoolWorkers {
+            workers: vec![worker("someone-elses-miner", 900.0, Some(now))],
+            total_hs: Some(900.0),
+            upstream_down: false,
+            exact_names: true,
+        }));
+        let result = check(&rig, Some(&proxy), exact.as_ref(), false, now);
+        assert_eq!(result.result, PoolCheckResult::Missing);
+        // The proxy is up but has lost its pool: nothing reaches the pool, rig hashing or not.
+        let cut_off = answer(
+            vec![worker(&format!("{WALLET}.rig01"), 7600.0, Some(now))],
+            true,
+        );
+        let result = check(&rig, Some(&proxy), cut_off.as_ref(), true, now);
+        assert_eq!(result.result, PoolCheckResult::Zero);
+        assert!(
+            result.message.contains("没有连上上游矿池"),
+            "{}",
+            result.message
+        );
+        // Pools never see the full login, so it is no candidate there.
+        let pool_view = answer(
+            vec![worker(&format!("{WALLET}.rig01"), 7600.0, Some(now))],
+            false,
+        );
+        assert!(
+            find(
+                &rig,
+                &account(),
+                pool_view.as_ref().unwrap().as_ref().unwrap()
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn proxy_addresses_match_flight_sheet_pool_urls() {
+        let proxy = |pool: &str| ProxyApi {
+            pool: pool.into(),
+            api_url: "http://10.0.0.1:4048".into(),
+            token: None,
+            has_token: false,
+            token_secret: None,
+        };
+        assert!(proxy("mac.icuicu.de:6666").serves("stratum+tcp://MAC.icuicu.de:6666"));
+        assert!(proxy("stratum+tcp://149.104.4.41:8888").serves("149.104.4.41:8888"));
+        assert!(proxy("mac.icuicu.de").serves("stratum+ssl://mac.icuicu.de:443"));
+        assert!(!proxy("mac.icuicu.de:6666").serves("mac.icuicu.de:7777"));
+        assert!(!proxy("icuicu.de").serves("mac.icuicu.de:6666"));
+        assert!(!proxy("").serves(""));
     }
 
     #[test]

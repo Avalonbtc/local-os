@@ -428,6 +428,9 @@ pub struct AlertSettings {
     pub pool_check: bool,
     /// Pop up offline and recovery notices in the web console.
     pub popup: bool,
+    /// Own xmrig-proxy instances: rigs whose pool address matches are checked per rig through
+    /// the proxy's HTTP API instead of being reported as unsupported.
+    pub proxies: Vec<ProxyApi>,
 }
 impl Default for AlertSettings {
     fn default() -> Self {
@@ -436,7 +439,47 @@ impl Default for AlertSettings {
             pool_offline_minutes: 10,
             pool_check: true,
             popup: true,
+            proxies: Vec::new(),
         }
+    }
+}
+/// An xmrig-proxy instance and its HTTP API (`"http": {"enabled": true, …}` in its config).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ProxyApi {
+    /// Pool address as written in flight sheets, e.g. `mac.icuicu.de:6666`; scheme optional,
+    /// without a port every port of the host matches.
+    pub pool: String,
+    /// Base URL of the proxy's HTTP API, e.g. `http://mac.icuicu.de:4048`.
+    pub api_url: String,
+    /// `http.access-token`. Write-only: never returned; empty keeps the stored token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// Read-only: a token is stored for this proxy.
+    #[serde(default)]
+    pub has_token: bool,
+    /// The stored token, encrypted with the master key. Never accepted from or sent to clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(skip)]
+    pub token_secret: Option<String>,
+}
+impl ProxyApi {
+    /// `host:port` (or `host`) of a pool address, lowercased and without scheme or path.
+    pub fn address(url: &str) -> String {
+        let rest = url.trim().split("://").last().unwrap_or("");
+        rest.split(['/', '?'])
+            .next()
+            .unwrap_or("")
+            .trim_end_matches('.')
+            .to_ascii_lowercase()
+    }
+    /// Whether a flight sheet's pool URL points at this proxy.
+    pub fn serves(&self, pool_url: &str) -> bool {
+        let (mine, theirs) = (Self::address(&self.pool), Self::address(pool_url));
+        if mine.is_empty() {
+            return false;
+        }
+        mine == theirs
+            || (!mine.contains(':') && theirs.rsplit_once(':').is_some_and(|(h, _)| h == mine))
     }
 }
 impl AlertSettings {
@@ -450,6 +493,45 @@ impl AlertSettings {
             return Err(crate::Error::Validation(
                 "矿池离线判定时间需在 5–1440 分钟之间".into(),
             ));
+        }
+        if self.proxies.len() > 50 {
+            return Err(crate::Error::Validation(
+                "最多配置 50 个 xmrig-proxy".into(),
+            ));
+        }
+        let plain = |s: &str| {
+            !s.is_empty()
+                && s.len() <= 255
+                && !s.chars().any(|c| c.is_whitespace() || c.is_control())
+        };
+        let mut seen = std::collections::HashSet::new();
+        for proxy in &self.proxies {
+            if !plain(proxy.pool.trim()) || ProxyApi::address(&proxy.pool).is_empty() {
+                return Err(crate::Error::Validation(format!(
+                    "代理的矿池地址无效：{}",
+                    proxy.pool
+                )));
+            }
+            if !seen.insert(ProxyApi::address(&proxy.pool)) {
+                return Err(crate::Error::Validation(format!(
+                    "矿池地址重复：{}",
+                    proxy.pool
+                )));
+            }
+            let api = proxy.api_url.trim();
+            if !plain(api) || !(api.starts_with("http://") || api.starts_with("https://")) {
+                return Err(crate::Error::Validation(format!(
+                    "代理 API 地址需以 http:// 或 https:// 开头：{}",
+                    proxy.api_url
+                )));
+            }
+            if proxy
+                .token
+                .as_ref()
+                .is_some_and(|t| t.len() > 512 || t.chars().any(char::is_control))
+            {
+                return Err(crate::Error::Validation("代理访问令牌无效".into()));
+            }
         }
         Ok(())
     }
@@ -573,6 +655,11 @@ pub struct PoolWorkers {
     pub workers: Vec<PoolWorker>,
     /// Hashrate of the whole wallet, used when the miner sets no worker name.
     pub total_hs: Option<f64>,
+    /// An xmrig-proxy with no live connection to its pool: nothing it collects arrives there.
+    pub upstream_down: bool,
+    /// Every miner is listed under a name RigDeck can derive (xmrig-proxy in `rig_id` or `user`
+    /// mode: the full login), so a name that is not listed means that miner is gone.
+    pub exact_names: bool,
 }
 /// One line of the HiveOS-style per-machine message feed: runtime events, job results and audit.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

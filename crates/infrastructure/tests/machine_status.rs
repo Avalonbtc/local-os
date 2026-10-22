@@ -18,6 +18,8 @@ const PROXIED: &str =
 #[derive(Default)]
 struct EmptyPool {
     asked: Mutex<Vec<PoolAccount>>,
+    /// (API URL, token) of each xmrig-proxy request.
+    proxied: Mutex<Vec<(String, Option<String>)>>,
 }
 #[async_trait::async_trait]
 impl PoolStats for EmptyPool {
@@ -34,11 +36,33 @@ impl PoolStats for EmptyPool {
                     last_share_at: Some(Utc::now()),
                 }],
                 total_hs: Some(52000.0),
+                upstream_down: false,
+                exact_names: false,
             });
         }
         Ok(PoolWorkers {
             workers: vec![],
             total_hs: Some(0.0),
+            upstream_down: false,
+            exact_names: false,
+        })
+    }
+    /// The user's own proxy: lists rig08 (hashing) by full login, but not rig07.
+    async fn proxy_workers(&self, url: &str, token: Option<&str>) -> Result<PoolWorkers> {
+        self.proxied
+            .lock()
+            .unwrap()
+            .push((url.into(), token.map(str::to_owned)));
+        Ok(PoolWorkers {
+            workers: vec![PoolWorker {
+                name: format!("{WALLET}.rig08"),
+                hashrate_hs: 7600.0,
+                last_share_at: Some(Utc::now()),
+            }],
+            total_hs: Some(7600.0),
+            upstream_down: false,
+            // Default `rig_id` mode: every rig listed by its full login.
+            exact_names: true,
         })
     }
 }
@@ -78,7 +102,7 @@ async fn statuses_alerts_and_one_evaluation_pass() {
         token_id: None,
     };
     let mut machines = Vec::new();
-    for role in ["pool", "recover", "proxy", "aggregated"] {
+    for role in ["pool", "recover", "proxy", "aggregated", "via-proxy"] {
         let id = Uuid::new_v4();
         let input: MachineInput = serde_json::from_value(json!({"name":format!("{role}-{id}"),"host":"127.0.0.1","port":22,"username":"root","host_key":"SHA256:fixture","policy":{}})).unwrap();
         store
@@ -87,8 +111,13 @@ async fn statuses_alerts_and_one_evaluation_pass() {
             .unwrap();
         machines.push(id);
     }
-    let (pool_rig, recovering, proxy_rig, aggregated) =
-        (machines[0], machines[1], machines[2], machines[3]);
+    let (pool_rig, recovering, proxy_rig, aggregated, via_proxy) = (
+        machines[0],
+        machines[1],
+        machines[2],
+        machines[3],
+        machines[4],
+    );
 
     // Statuses round-trip; alerts for an unknown machine are dropped, not a foreign-key error.
     let mut seeded = status(pool_rig, LocalState::Online, PoolState::Online);
@@ -96,6 +125,9 @@ async fn statuses_alerts_and_one_evaluation_pass() {
     // Same history for the proxied rig: it must still not be reported.
     let mut seeded_proxied = status(aggregated, LocalState::Online, PoolState::Online);
     seeded_proxied.pool_bad_since = seeded.pool_bad_since;
+    // The rig behind the user's own xmrig-proxy has been missing there for 6 minutes too.
+    let mut seeded_via_proxy = status(via_proxy, LocalState::Online, PoolState::Online);
+    seeded_via_proxy.pool_bad_since = seeded.pool_bad_since;
     let before = store.alerts(None, 1).await.unwrap();
     let baseline = before.last().map_or(0, |a| a.id);
     let alert = |machine, message: &str| NewAlert {
@@ -110,6 +142,7 @@ async fn statuses_alerts_and_one_evaluation_pass() {
             &[
                 seeded.clone(),
                 seeded_proxied,
+                seeded_via_proxy,
                 status(recovering, LocalState::Offline, PoolState::Unknown),
                 status(Uuid::new_v4(), LocalState::Online, PoolState::Unknown),
             ],
@@ -181,6 +214,8 @@ async fn statuses_alerts_and_one_evaluation_pass() {
         (proxy_rig, "mac.icuicu.de:6666", WALLET),
         // The rig is configured for SupportXMR, but its traffic goes through xmrig-proxy.
         (aggregated, supportxmr, PROXIED),
+        // The user's own xmrig-proxy, configured below with its API.
+        (via_proxy, "stratum+tcp://149.104.4.41:8888", WALLET),
     ] {
         let job = store
             .enqueue(
@@ -190,7 +225,7 @@ async fn statuses_alerts_and_one_evaluation_pass() {
                     idempotency_key: Uuid::new_v4().to_string(),
                     include_controller: false,
                 },
-                &json!({"kind":"apply","snapshot":{"hosts":{machine.to_string():rendered(url, format!("{wallet}.rig01"))}}}),
+                &json!({"kind":"apply","snapshot":{"hosts":{machine.to_string():rendered(url, format!("{wallet}.{}", if machine == via_proxy { "rig07" } else { "rig01" }))}}}),
                 &actor,
             )
             .await
@@ -225,12 +260,6 @@ async fn statuses_alerts_and_one_evaluation_pass() {
         });
     }
     store.observe_many(&samples).await.unwrap();
-    let mut settings = FarmSettings::default();
-    settings.alerts.pool_offline_minutes = 5;
-    store
-        .save_farm_settings(&serde_json::to_value(&settings).unwrap(), &actor)
-        .await
-        .unwrap();
 
     let pool = Arc::new(EmptyPool::default());
     let remote = Arc::new(SshExecutor::default());
@@ -245,6 +274,34 @@ async fn statuses_alerts_and_one_evaluation_pass() {
         push: Default::default(),
         pools: Some(pool.clone()),
     };
+
+    // Proxy settings: the token is stored encrypted and only reported as present.
+    let mut settings = FarmSettings::default();
+    settings.alerts.pool_offline_minutes = 5;
+    settings.alerts.proxies = vec![ProxyApi {
+        pool: "149.104.4.41:8888".into(),
+        api_url: "http://149.104.4.41:4048/".into(),
+        token: Some("proxy-token-1".into()),
+        has_token: false,
+        token_secret: Some("forged by a client".into()),
+    }];
+    let saved = app.save_farm_settings(&actor, settings).await.unwrap();
+    assert!(saved.alerts.proxies[0].has_token);
+    assert_eq!(saved.alerts.proxies[0].token, None);
+    assert_eq!(saved.alerts.proxies[0].token_secret, None);
+    let raw = store.farm_settings().await.unwrap().unwrap().to_string();
+    assert!(
+        !raw.contains("proxy-token-1") && !raw.contains("forged"),
+        "{raw}"
+    );
+    let read = app.farm_settings().await.unwrap();
+    assert!(read.alerts.proxies[0].has_token);
+    assert!(read.alerts.proxies[0].token_secret.is_none());
+    // Saving the form back without a token keeps the stored one.
+    let mut again = read.clone();
+    again.alerts.proxies[0].has_token = false;
+    app.save_farm_settings(&actor, again).await.unwrap();
+    assert!(app.farm_settings().await.unwrap().alerts.proxies[0].has_token);
     let after_seed = store.alerts(None, 1).await.unwrap()[0].id;
     // The first pass runs at once; the second (10 s later) must not repeat any alert.
     let evaluator = tokio::spawn(app.clone().run_status());
@@ -266,18 +323,27 @@ async fn statuses_alerts_and_one_evaluation_pass() {
         .collect();
     assert_eq!(
         summary,
-        [
-            (pool_rig, AlertKind::Pool, AlertEvent::Offline),
-            (recovering, AlertKind::Local, AlertEvent::Recovered),
-        ],
+        {
+            let mut expected = vec![
+                (pool_rig, AlertKind::Pool, AlertEvent::Offline),
+                (recovering, AlertKind::Local, AlertEvent::Recovered),
+                (via_proxy, AlertKind::Pool, AlertEvent::Offline),
+            ];
+            expected.sort_by_key(|(id, ..)| raised.iter().position(|a| a.machine_id == *id));
+            expected
+        },
         "{raised:#?}"
     );
+    let message = |id| &raised.iter().find(|a| a.machine_id == id).unwrap().message;
     assert!(
-        raised[0]
-            .message
-            .contains("找不到 worker「rig01」，这个钱包的总算力也为 0"),
+        message(pool_rig).contains("找不到 worker「rig01」，这个钱包的总算力也为 0"),
         "{}",
-        raised[0].message
+        message(pool_rig)
+    );
+    assert!(
+        message(via_proxy).contains("xmrig-proxy 上看不到 worker「rig07」"),
+        "{}",
+        message(via_proxy)
     );
 
     let statuses = app.machine_statuses().await.unwrap();
@@ -308,6 +374,18 @@ async fn statuses_alerts_and_one_evaluation_pass() {
         "{asked:?}"
     );
     assert_eq!(asked.iter().filter(|a| a.wallet == PROXIED).count(), 1);
+    // The proxy rig never went to a public pool; its proxy was asked once, with the token.
+    assert_eq!(
+        of(via_proxy).pool_checks[0].provider.as_deref(),
+        Some("xmrig-proxy")
+    );
+    assert_eq!(
+        pool.proxied.lock().unwrap().clone(),
+        [(
+            "http://149.104.4.41:4048/".to_owned(),
+            Some("proxy-token-1".to_owned())
+        )]
+    );
     assert!(asked.iter().all(|a| a.provider == "supportxmr"));
 
     // No worker claims these; leave nothing queued for tests sharing the database.

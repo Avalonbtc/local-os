@@ -3074,6 +3074,12 @@ export interface components {
              * @default true
              */
             popup: boolean;
+            /**
+             * @description Own xmrig-proxy instances: rigs whose pool address matches are checked per rig through
+             *     the proxy's HTTP API instead of being reported as unsupported.
+             * @default []
+             */
+            proxies: components["schemas"]["ProxyApi"][];
         };
         AmdOc: {
             /**
@@ -3228,7 +3234,8 @@ export interface components {
              *       "local_offline_minutes": 2,
              *       "pool_check": true,
              *       "pool_offline_minutes": 10,
-             *       "popup": true
+             *       "popup": true,
+             *       "proxies": []
              *     }
              */
             alerts: components["schemas"]["AlertSettings"];
@@ -3526,6 +3533,23 @@ export interface components {
         };
         PoolCheckResult: "unsupported" | "ok" | "missing" | "zero" | "ambiguous" | "error";
         PoolState: ("online" | "offline") | "unsupported" | "unknown";
+        /** @description An xmrig-proxy instance and its HTTP API (`"http": {"enabled": true, …}` in its config). */
+        ProxyApi: {
+            /** @description Base URL of the proxy's HTTP API, e.g. `http://mac.icuicu.de:4048`. */
+            api_url: string;
+            /**
+             * @description Read-only: a token is stored for this proxy.
+             * @default false
+             */
+            has_token: boolean;
+            /**
+             * @description Pool address as written in flight sheets, e.g. `mac.icuicu.de:6666`; scheme optional,
+             *     without a port every port of the host matches.
+             */
+            pool: string;
+            /** @description `http.access-token`. Write-only: never returned; empty keeps the stored token. */
+            token?: string | null;
+        };
         /** ResolveTarget */
         ResolveTarget: {
             decision: string;

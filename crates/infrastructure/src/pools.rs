@@ -120,6 +120,8 @@ pub fn parse_kryptex(body: &Value) -> Result<PoolWorkers> {
     Ok(PoolWorkers {
         total_hs: Some(workers.iter().map(|w| w.hashrate_hs).sum()),
         workers,
+        upstream_down: false,
+        exact_names: false,
     })
 }
 /// `GET www.supportxmr.com/api/miner/{wallet}/stats/allWorkers`: `global` plus one object per
@@ -137,6 +139,8 @@ pub fn parse_supportxmr(body: &Value) -> Result<PoolWorkers> {
                 last_share_at: time(&w["lts"]),
             })
             .collect(),
+        upstream_down: false,
+        exact_names: false,
     })
 }
 /// `GET api.nanopool.org/v1/{coin}/workers/{wallet}`.
@@ -160,6 +164,8 @@ pub fn parse_nanopool(body: &Value) -> Result<PoolWorkers> {
     Ok(PoolWorkers {
         total_hs: Some(workers.iter().map(|w| w.hashrate_hs).sum()),
         workers,
+        upstream_down: false,
+        exact_names: false,
     })
 }
 /// `GET api.hashvault.pro/v3/{coin}/wallet/{wallet}/stats?workers=true`: `collective` totals and
@@ -182,7 +188,70 @@ pub fn parse_hashvault(body: &Value) -> Result<PoolWorkers> {
     Ok(PoolWorkers {
         total_hs: Some(rate(&collective["hashRate"])),
         workers,
+        upstream_down: false,
+        exact_names: false,
     })
+}
+
+/// xmrig-proxy `GET /1/summary` and `GET /1/workers`. Each worker is
+/// `[name, ip, connections, accepted, rejected, invalid, hashes, last share (ms), hashrate 1 m,
+/// 10 m, 1 h, 12 h, 24 h]` with hashrates in kH/s. The name follows the proxy's `workers` mode:
+/// rig-id (falling back to the miner's login), login, password, user agent or IP.
+pub fn parse_xmrig_proxy(summary: &Value, workers: &Value) -> Result<PoolWorkers> {
+    let list = workers["workers"]
+        .as_array()
+        .ok_or_else(|| invalid("xmrig-proxy"))?;
+    let khs = |v: &Value| rate(v) * 1000.0;
+    Ok(PoolWorkers {
+        workers: list
+            .iter()
+            .filter_map(Value::as_array)
+            .map(|w| PoolWorker {
+                name: w
+                    .first()
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                hashrate_hs: w.get(8).map_or(0.0, khs),
+                last_share_at: w.get(7).and_then(time),
+            })
+            .collect(),
+        total_hs: summary["hashrate"]["total"]
+            .get(0)
+            .or(workers["hashrate"]["total"].get(0))
+            .map(khs),
+        upstream_down: summary["upstreams"]["active"].as_u64() == Some(0),
+        // rig_id falls back to the login for miners without --rig-id (RigDeck sets none).
+        exact_names: matches!(workers["mode"].as_str(), Some("rig_id" | "user")),
+    })
+}
+
+impl PublicPools {
+    async fn proxy_get(&self, url: &str, token: Option<&str>) -> Result<Value> {
+        let mut request = self.client.get(url);
+        if let Some(token) = token {
+            request = request.bearer_auth(token);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|e| Error::Unavailable(format!("xmrig-proxy 接口不可达：{e}")))?;
+        let status = response.status();
+        if matches!(status.as_u16(), 401 | 403) {
+            return Err(Error::Unavailable(format!(
+                "xmrig-proxy 拒绝访问（HTTP {status}），检查访问令牌"
+            )));
+        }
+        if !status.is_success() {
+            return Err(Error::Unavailable(format!(
+                "xmrig-proxy 接口返回 HTTP {status}"
+            )));
+        }
+        response
+            .json()
+            .await
+            .map_err(|e| Error::Unavailable(format!("xmrig-proxy 接口返回无效 JSON：{e}")))
+    }
 }
 
 #[async_trait::async_trait]
@@ -231,6 +300,12 @@ impl PoolStats for PublicPools {
             .await
             .map_err(|e| Error::Unavailable(format!("矿池接口返回无效 JSON：{e}")))?;
         parse(&body)
+    }
+    async fn proxy_workers(&self, url: &str, token: Option<&str>) -> Result<PoolWorkers> {
+        let base = url.trim().trim_end_matches('/');
+        let summary = self.proxy_get(&format!("{base}/1/summary"), token).await?;
+        let workers = self.proxy_get(&format!("{base}/1/workers"), token).await?;
+        parse_xmrig_proxy(&summary, &workers)
     }
 }
 
@@ -380,6 +455,101 @@ mod tests {
         let map = json!({"collective":{"hashRate":0},"collectiveWorkers":{"rig02":{"hashRate":0}}});
         assert_eq!(parse_hashvault(&map).unwrap().workers[0].name, "rig02");
         assert!(parse_hashvault(&json!({"error":"bad wallet"})).is_err());
+    }
+
+    // Shaped after xmrig-proxy's ApiRouter (getWorkers / getMinersSummary): hashrates in kH/s,
+    // last share in milliseconds, rigs without --rig-id listed under their full login.
+    #[test]
+    fn xmrig_proxy_lists_rigs_with_hashrate_last_share_and_upstream_state() {
+        let workers = json!({
+            "hashrate": {"total": [15.2, 15.0, 14.8, 14.9, 14.9, 14.9]},
+            "mode": "rig_id",
+            "workers": [
+                [format!("{WALLET}.rig01"), "192.168.1.21", 1, 812, 0, 0, 98_000_000_i64, 1792646795928_i64, 7.61, 7.5, 7.4, 7.4, 7.4, 7.4],
+                [format!("{WALLET}.rig02"), "192.168.1.22", 0, 300, 1, 0, 40_000_000_i64, 1792640000000_i64, 0.0, 0.0, 2.1, 6.9, 7.0, 7.0]
+            ]
+        });
+        let summary = json!({"hashrate": {"total": [15.2, 15.0]}, "upstreams": {"active": 1, "sleep": 0, "error": 0, "total": 1}});
+        let parsed = parse_xmrig_proxy(&summary, &workers).unwrap();
+        assert_eq!(parsed.workers.len(), 2);
+        assert_eq!(parsed.workers[0].name, format!("{WALLET}.rig01"));
+        assert!((parsed.workers[0].hashrate_hs - 7610.0).abs() < 1e-6);
+        assert_eq!(
+            parsed.workers[0].last_share_at.unwrap().timestamp_millis(),
+            1792646795928
+        );
+        assert_eq!(parsed.workers[1].hashrate_hs, 0.0);
+        assert!((parsed.total_hs.unwrap() - 15200.0).abs() < 1e-6);
+        assert!(!parsed.upstream_down);
+        assert!(parsed.exact_names);
+
+        // The proxy lost its pool: rigs still connect, but nothing reaches the pool.
+        let down = json!({"hashrate": {"total": [0.0]}, "upstreams": {"active": 0, "sleep": 0, "error": 1, "total": 1}});
+        assert!(parse_xmrig_proxy(&down, &workers).unwrap().upstream_down);
+        // Per-worker statistics disabled (`"workers": false`): an empty list, not an error.
+        let none = json!({"hashrate": {"total": [15.2]}, "mode": "none", "workers": []});
+        let none = parse_xmrig_proxy(&summary, &none).unwrap();
+        assert!(none.workers.is_empty() && !none.exact_names);
+        // Named by password (often just `x`) or user agent: names cannot be trusted.
+        let by_password = json!({"hashrate": {"total": [15.2]}, "mode": "password", "workers": [["x", "192.168.1.21", 2, 1, 0, 0, 1, 0, 1.0, 1.0, 1.0, 1.0, 1.0]]});
+        assert!(
+            !parse_xmrig_proxy(&summary, &by_password)
+                .unwrap()
+                .exact_names
+        );
+        assert!(parse_xmrig_proxy(&summary, &json!({"error": "x"})).is_err());
+    }
+
+    /// A local stand-in for xmrig-proxy's HTTP API that only answers the right bearer token.
+    async fn fake_proxy(token: &'static str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut buffer = vec![0; 4096];
+                let n = socket.read(&mut buffer).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&buffer[..n]).to_string();
+                let authorized = request
+                    .lines()
+                    .any(|l| l.eq_ignore_ascii_case(&format!("authorization: Bearer {token}")));
+                let body = if request.starts_with("GET /1/summary ") {
+                    json!({"upstreams": {"active": 1, "total": 1}, "hashrate": {"total": [7.6]}})
+                } else {
+                    json!({"mode": "rig_id", "hashrate": {"total": [7.6]}, "workers": [
+                        [format!("{WALLET}.rig01"), "192.168.1.21", 1, 5, 0, 0, 1, 1792646795928_i64, 7.6, 7.6, 7.6, 7.6, 7.6]
+                    ]})
+                };
+                let (status, body) = if authorized {
+                    ("200 OK", body.to_string())
+                } else {
+                    ("401 Unauthorized", "{}".to_owned())
+                };
+                let reply = format!(
+                    "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(reply.as_bytes()).await;
+            }
+        });
+        format!("http://{address}/")
+    }
+
+    #[tokio::test]
+    async fn xmrig_proxy_is_asked_with_its_access_token() {
+        let url = fake_proxy("proxy-secret").await;
+        let pools = PublicPools::default();
+        let workers = pools
+            .proxy_workers(&url, Some("proxy-secret"))
+            .await
+            .unwrap();
+        assert_eq!(workers.workers[0].name, format!("{WALLET}.rig01"));
+        assert!((workers.workers[0].hashrate_hs - 7600.0).abs() < 1e-6);
+        assert!(workers.exact_names && !workers.upstream_down);
+        for token in [Some("wrong"), None] {
+            let error = pools.proxy_workers(&url, token).await.unwrap_err();
+            assert!(error.to_string().contains("检查访问令牌"), "{error}");
+        }
     }
 
     /// Against the real pools: `cargo test -p rig-infrastructure pools -- --ignored`.

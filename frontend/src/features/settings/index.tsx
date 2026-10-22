@@ -70,7 +70,7 @@ function FarmSettingsForm() {
           <InputNumber min={1} max={1440} precision={0} addonAfter="分钟" style={{ width: "100%" }} />
         </Form.Item>
         <Form.Item name={["alerts", "pool_check"]} label="矿池检测" valuePropName="checked"
-          extra="向矿池的公开接口查询每台矿机的 worker 是否在出算力。支持 supportxmr.com、pool.kryptex.com、hashvault.pro、nanopool.org；自建代理或 IP:端口 的矿池显示「不支持矿池检测」，不会报离线；经 xmrig-proxy 汇总、矿池上找不到单台 worker 名时只按钱包总算力判断，钱包还有算力就不报。">
+          extra="向矿池的公开接口查询每台矿机的 worker 是否在出算力。支持 supportxmr.com、pool.kryptex.com、hashvault.pro、nanopool.org；自建代理或 IP:端口 的矿池显示「不支持矿池检测」，不会报离线（自建 xmrig-proxy 可在下方填写 API 后按单机检测）；经 xmrig-proxy 汇总、矿池上找不到单台 worker 名时只按钱包总算力判断，钱包还有算力就不报。">
           <Switch />
         </Form.Item>
         <Form.Item
@@ -85,6 +85,53 @@ function FarmSettingsForm() {
           extra="打开控制台时，在右下角弹出离线和恢复通知。">
           <Switch />
         </Form.Item>
+        <Typography.Title level={5}>自建 xmrig-proxy</Typography.Title>
+        <Typography.Paragraph type="secondary">
+          飞行表里的矿池地址填的是这里的代理时，改为查询代理的 HTTP API（需在代理配置里开启 <code>http</code>），按每台矿机的登录名核对是否在出算力；代理没连上上游矿池时，经它的矿机都算矿池离线。
+        </Typography.Paragraph>
+        <Form.List name={["alerts", "proxies"]}>
+          {(fields, { add, remove }) => (
+            <>
+              {fields.map((field) => {
+                const stored = settings.data?.alerts?.proxies?.[field.name]?.has_token;
+                return (
+                  <Space key={field.key} align="start" wrap className="settings-proxy-row">
+                    <Form.Item
+                      name={[field.name, "pool"]}
+                      label="飞行表里的矿池地址"
+                      rules={[{ required: true, message: "例如 mac.icuicu.de:6666" }]}
+                    >
+                      <Input placeholder="mac.icuicu.de:6666" style={{ width: 220 }} />
+                    </Form.Item>
+                    <Form.Item
+                      name={[field.name, "api_url"]}
+                      label="代理 API 地址"
+                      rules={[
+                        { required: true, message: "例如 http://mac.icuicu.de:4048" },
+                        { pattern: /^https?:\/\/\S+$/, message: "以 http:// 或 https:// 开头" },
+                      ]}
+                    >
+                      <Input placeholder="http://mac.icuicu.de:4048" style={{ width: 260 }} />
+                    </Form.Item>
+                    <Form.Item name={[field.name, "token"]} label="访问令牌（access-token）">
+                      <Input.Password
+                        placeholder={stored ? "已保存，留空不变" : "未设置可留空"}
+                        autoComplete="new-password"
+                        style={{ width: 200 }}
+                      />
+                    </Form.Item>
+                    <Form.Item label=" ">
+                      <Button onClick={() => remove(field.name)}>删除</Button>
+                    </Form.Item>
+                  </Space>
+                );
+              })}
+              <Form.Item>
+                <Button onClick={() => add({ pool: "", api_url: "" })}>添加 xmrig-proxy</Button>
+              </Form.Item>
+            </>
+          )}
+        </Form.List>
         <Button type="primary" htmlType="submit" loading={busy}>
           保存
         </Button>
