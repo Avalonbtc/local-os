@@ -8,6 +8,7 @@ pub mod jobs;
 pub mod mining;
 pub mod push;
 pub mod settings;
+pub mod status;
 pub mod telemetry;
 use rig_domain::*;
 use std::{collections::HashMap, sync::Arc};
@@ -23,6 +24,8 @@ pub struct App {
     pub bmc: Arc<HashMap<String, Arc<dyn BmcProvider>>>,
     /// Rig-initiated telemetry; `Default` disables it.
     pub push: Arc<push::PushHub>,
+    /// Pool miner APIs for pool-side offline detection; `None` checks local status only.
+    pub pools: Option<Arc<dyn PoolStats>>,
 }
 impl App {
     pub async fn credential(&self, machine: uuid::Uuid, bmc: bool) -> Result<Credential> {

@@ -148,6 +148,17 @@ pub trait SettingsRepository: Send + Sync {
     async fn farm_settings(&self) -> Result<Option<Value>>;
     async fn save_farm_settings(&self, settings: &Value, actor: &Actor) -> Result<()>;
 }
+#[async_trait]
+pub trait StatusRepository: Send + Sync {
+    async fn machine_statuses(&self) -> Result<Vec<MachineStatus>>;
+    /// Store the new statuses and the alerts their transitions raised in one transaction, so
+    /// a restart can neither repeat nor lose an alert.
+    async fn save_statuses(&self, statuses: &[MachineStatus], alerts: &[NewAlert]) -> Result<()>;
+    /// Alerts with an id above `after`, oldest first; without `after`, the newest `limit`.
+    async fn alerts(&self, after: Option<i64>, limit: i64) -> Result<Vec<StatusAlert>>;
+    /// Each machine's current deployment (rendered instances with pool URL and login).
+    async fn current_deployments(&self) -> Result<Vec<(Uuid, Value)>>;
+}
 pub trait Repository:
     IdentityRepository
     + FleetRepository
@@ -157,6 +168,7 @@ pub trait Repository:
     + TelemetryRepository
     + AuditRepository
     + SettingsRepository
+    + StatusRepository
 {
 }
 impl<T> Repository for T where
@@ -168,6 +180,7 @@ impl<T> Repository for T where
         + TelemetryRepository
         + AuditRepository
         + SettingsRepository
+        + StatusRepository
 {
 }
 
@@ -340,4 +353,15 @@ pub trait BmcProvider: Send + Sync {
         credential: &Credential,
         action: &str,
     ) -> Result<Value>;
+}
+/// Public miner APIs of pools; pools without one are reported as unsupported, never offline.
+#[async_trait]
+pub trait PoolStats: Send + Sync {
+    /// The account a miner logging in with `login` at `url` reports to, or `None` when the
+    /// pool (own proxy, bare IP:port, unknown host or coin) has no supported API.
+    fn account(&self, url: &str, coin: &str, login: &str) -> Option<PoolAccount>;
+    async fn workers(&self, account: &PoolAccount) -> Result<PoolWorkers>;
+    /// Rigs connected to the xmrig-proxy whose HTTP API is at `url`, and whether the proxy
+    /// itself reaches its pool.
+    async fn proxy_workers(&self, url: &str, token: Option<&str>) -> Result<PoolWorkers>;
 }

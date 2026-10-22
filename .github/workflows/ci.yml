@@ -32,6 +32,7 @@ jobs:
       - run: cargo test -p rig-infrastructure --test postgres -- --ignored
       - run: cargo test -p rig-infrastructure --test job_dispatch -- --ignored
       - run: cargo test -p rig-infrastructure --test telemetry_push -- --ignored
+      - run: cargo test -p rig-infrastructure --test machine_status -- --ignored
       - run: python3 tests/redfish/run.py
       - run: python3 tests/check_boundaries.py
       - run: python3 tests/test_dependencies.py

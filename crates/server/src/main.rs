@@ -97,6 +97,7 @@ async fn main() -> anyhow::Result<()> {
         runtime,
         adapters: Arc::new(adapters::registry()),
         bmc: Arc::new(bmc::registry()),
+        pools: Some(Arc::new(rig_infrastructure::pools::PublicPools::default())),
     };
     let bind = std::env::var("RIGDECK_BIND").unwrap_or_else(|_| "127.0.0.1:8080".into());
     let origin = std::env::var("RIGDECK_ORIGIN").unwrap_or_else(|_| "https://rigdeck.local".into());
