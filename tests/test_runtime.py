@@ -309,7 +309,7 @@ class RuntimeTests(unittest.TestCase):
         bad = {**cfg, "argv": ["mock-miner.py", "%API_PORT%", "zero"], "verification_seconds": 1}
         operation = str(uuid.uuid4())
         self.rt.atomic(self.rt.opdir(operation) / "state.json", {"status": "running"})
-        with self.assertRaisesRegex(RuntimeError, "verification timed out"):
+        with self.assertRaisesRegex(RuntimeError, "启动验证超时（1 秒）：cpu1："):
             self.rt.apply_deployment({"instances": [bad], "sheet_id": str(uuid.uuid4()), "sheet_name": "test", "sheet_version": 1}, operation)
         self.assertEqual(self.rt.state("cpu1")["version"], version)
         wait(lambda: (self.rt.sample("cpu1").get("stats") or {}).get("hashrate_hs") == 12500)
@@ -393,6 +393,20 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(self.rt.normalize(cfg, {"stats": {"hs": [2, 3], "hs_units": "mhs"}})["hashrate_hs"], 5e6)
         with self.assertRaises(ValueError):
             self.rt.normalize(cfg, {"stats": {"hs": [2], "hs_units": "unknown"}})
+
+    def test_algorithm_aliases_and_verification_reasons(self):
+        self.assertEqual(self.rt.algorithm_key("RandomX"), self.rt.algorithm_key("rx/0"))
+        self.assertNotEqual(self.rt.algorithm_key("rx/wow"), self.rt.algorithm_key("rx/0"))
+        srb = self.rt.normalize({"adapter": "srbminer", "algorithm": "rx/0"},
+                                {"algorithms": [{"name": "randomx", "hashrate": {"now": 1}}]})
+        self.assertEqual(srb["hashrate_hs"], 1)
+        cfg = {"adapter": "xmrig", "algorithm": "rx/0", "package_version": "6.26.0"}
+        running = {"process_running": True, "version_reported": True, "stats": {"hashrate_hs": None}}
+        self.assertIn("进程没有运行", self.rt.verification_failure(cfg, {**running, "process_running": False}))
+        self.assertIn("没有连上矿池", self.rt.verification_failure(cfg, {**running, "pool_connected": False}))
+        self.assertIn("飞行表 6.26.0，矿工报告 6.25.0", self.rt.verification_failure(
+            cfg, {**running, "version_match": False, "stats": {"version": "6.25.0"}}))
+        self.assertEqual(self.rt.verification_failure(cfg, running), "还没有算力数据")
 
     def test_native_stats_contracts_use_observed_algorithm_and_version(self):
         srb = self.rt.normalize({"adapter": "srbminer", "algorithm": "randomx"}, {
