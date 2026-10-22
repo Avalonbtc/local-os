@@ -6,6 +6,7 @@ mod flights;
 mod identity;
 mod jobs;
 mod settings;
+mod status;
 mod telemetry;
 use rig_domain::*;
 use serde::de::DeserializeOwned;

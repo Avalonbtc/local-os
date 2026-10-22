@@ -87,6 +87,7 @@ async fn batch_probe_and_create_report_per_row_and_queue_one_bootstrap() {
         adapters: Arc::new(adapters::registry()),
         bmc: Arc::new(bmc::registry()),
         push: Default::default(),
+        pools: None,
     };
     let hosts = ["10.9.0.1", "10.9.0.9", "10.9.0.2"];
     let probed = app

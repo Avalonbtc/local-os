@@ -100,6 +100,7 @@ async fn all_selected_machines_start_without_slots_or_canary_but_same_machine_wa
         adapters: Arc::new(adapters::registry()),
         bmc: Arc::new(bmc::registry()),
         push: Default::default(),
+        pools: None,
     };
     let secret = vault
         .encrypt(&Credential::Password {

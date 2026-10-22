@@ -9,6 +9,7 @@ import {
   Modal,
   Popconfirm,
   Space,
+  Switch,
   Table,
   Tabs,
   Typography,
@@ -43,7 +44,7 @@ function FarmSettingsForm() {
           try {
             const saved = await unwrap(client.PUT("/api/v1/settings/farm", { body: values }));
             queryClient.setQueryData(["farm-settings"], saved);
-            message.success("已保存，矿机列表的预估电费已按新电价计算");
+            message.success("已保存");
           } catch (e) {
             message.error((e as Error).message);
           } finally {
@@ -58,6 +59,31 @@ function FarmSettingsForm() {
           rules={[{ required: true, message: "输入电价" }]}
         >
           <InputNumber min={0} max={100} step={0.01} precision={4} addonAfter="元/度" style={{ width: "100%" }} />
+        </Form.Item>
+        <Typography.Title level={5}>离线通知</Typography.Title>
+        <Form.Item
+          name={["alerts", "local_offline_minutes"]}
+          label="本地离线判定"
+          extra="超过这么久既没有收到矿机主动上报、SSH 读取也失败，才算离线并通知一次；恢复上报后再通知一次。"
+          rules={[{ required: true, message: "输入分钟数" }]}
+        >
+          <InputNumber min={1} max={1440} precision={0} addonAfter="分钟" style={{ width: "100%" }} />
+        </Form.Item>
+        <Form.Item name={["alerts", "pool_check"]} label="矿池检测" valuePropName="checked"
+          extra="向矿池的公开接口查询每台矿机的 worker 是否在出算力。支持 supportxmr.com、pool.kryptex.com、hashvault.pro、nanopool.org；自建代理或 IP:端口 的矿池显示「不支持矿池检测」，不会报离线。">
+          <Switch />
+        </Form.Item>
+        <Form.Item
+          name={["alerts", "pool_offline_minutes"]}
+          label="矿池离线判定"
+          extra="矿机本地在运行，但矿池持续这么久看不到这个 worker 或算力为 0，才算矿池离线。矿池算力是几分钟的平均值，太短容易误报。"
+          rules={[{ required: true, message: "输入分钟数" }]}
+        >
+          <InputNumber min={5} max={1440} precision={0} addonAfter="分钟" style={{ width: "100%" }} />
+        </Form.Item>
+        <Form.Item name={["alerts", "popup"]} label="网页弹窗" valuePropName="checked"
+          extra="打开控制台时，在右下角弹出离线和恢复通知。">
+          <Switch />
         </Form.Item>
         <Button type="primary" htmlType="submit" loading={busy}>
           保存

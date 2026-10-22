@@ -395,12 +395,16 @@ impl std::fmt::Debug for PushTarget {
 pub struct FarmSettings {
     /// Electricity price per kWh in yuan; the summary bar's daily cost estimate uses it.
     pub electricity_price: f64,
+    /// Offline detection and notifications; settings saved before alerts existed get defaults.
+    #[serde(default)]
+    pub alerts: AlertSettings,
 }
 impl Default for FarmSettings {
     fn default() -> Self {
         // The value the console used before the price became a setting.
         Self {
             electricity_price: 0.56,
+            alerts: AlertSettings::default(),
         }
     }
 }
@@ -409,8 +413,162 @@ impl FarmSettings {
         if !self.electricity_price.is_finite() || !(0.0..=100.0).contains(&self.electricity_price) {
             return Err(crate::Error::Validation("电价需在 0–100 元/度之间".into()));
         }
+        self.alerts.validate()
+    }
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct AlertSettings {
+    /// Minutes without any telemetry (push or SSH) before a machine counts as locally offline.
+    pub local_offline_minutes: u32,
+    /// Minutes the pool must keep showing no hashrate for a running worker before it counts as
+    /// pool-offline. Pools average hashrate over several minutes, so short values misfire.
+    pub pool_offline_minutes: u32,
+    /// Ask the pool's public API whether each worker is hashing (supported pools only).
+    pub pool_check: bool,
+    /// Pop up offline and recovery notices in the web console.
+    pub popup: bool,
+}
+impl Default for AlertSettings {
+    fn default() -> Self {
+        Self {
+            local_offline_minutes: 2,
+            pool_offline_minutes: 10,
+            pool_check: true,
+            popup: true,
+        }
+    }
+}
+impl AlertSettings {
+    pub fn validate(&self) -> crate::Result<()> {
+        if !(1..=1440).contains(&self.local_offline_minutes) {
+            return Err(crate::Error::Validation(
+                "本地离线判定时间需在 1–1440 分钟之间".into(),
+            ));
+        }
+        if !(5..=1440).contains(&self.pool_offline_minutes) {
+            return Err(crate::Error::Validation(
+                "矿池离线判定时间需在 5–1440 分钟之间".into(),
+            ));
+        }
         Ok(())
     }
+}
+/// What the console shows for a machine: local offline wins over pool offline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MachineState {
+    Online,
+    LocalOffline,
+    PoolOffline,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalState {
+    Online,
+    Offline,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PoolState {
+    Online,
+    Offline,
+    /// Every running instance mines on a pool without a supported API (own proxy, IP:port…).
+    Unsupported,
+    /// No instance is meant to be mining, the check is off, or no pool answer yet.
+    Unknown,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PoolCheckResult {
+    /// The pool sees this worker hashing.
+    Ok,
+    /// The pool does not list this worker.
+    Missing,
+    /// The pool lists the worker without hashrate or recent shares.
+    Zero,
+    Unsupported,
+    /// The pool API could not be read; never counts as offline.
+    Error,
+}
+/// One running miner instance as its pool sees it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PoolCheck {
+    pub instance: String,
+    pub pool_url: Option<String>,
+    /// Supported pool API used (`kryptex`, `supportxmr`, `nanopool`, `hashvault`).
+    pub provider: Option<String>,
+    /// Worker name looked for on the pool.
+    pub worker: Option<String>,
+    pub result: PoolCheckResult,
+    pub hashrate_hs: Option<f64>,
+    pub last_share_at: Option<DateTime<Utc>>,
+    pub message: String,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct MachineStatus {
+    pub machine_id: Uuid,
+    pub state: MachineState,
+    pub local: LocalState,
+    /// Last telemetry sample without an error, by controller time.
+    pub last_seen_at: Option<DateTime<Utc>>,
+    pub local_since: DateTime<Utc>,
+    pub pool: PoolState,
+    pub pool_since: DateTime<Utc>,
+    /// When the pool first showed a running worker idle; the debounce for pool offline.
+    pub pool_bad_since: Option<DateTime<Utc>>,
+    pub pool_checks: Vec<PoolCheck>,
+    pub checked_at: DateTime<Utc>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AlertKind {
+    Local,
+    Pool,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AlertEvent {
+    Offline,
+    Recovered,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct NewAlert {
+    pub machine_id: Uuid,
+    pub kind: AlertKind,
+    pub event: AlertEvent,
+    pub at: DateTime<Utc>,
+    pub message: String,
+}
+/// One offline or recovery notice; ids increase, so clients poll with `after`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct StatusAlert {
+    pub id: i64,
+    pub machine_id: Uuid,
+    pub machine_name: String,
+    pub kind: AlertKind,
+    pub event: AlertEvent,
+    pub at: DateTime<Utc>,
+    pub message: String,
+}
+/// An account on a pool with a supported public miner API.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PoolAccount {
+    pub provider: String,
+    pub coin: String,
+    pub wallet: String,
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct PoolWorker {
+    pub name: String,
+    pub hashrate_hs: f64,
+    pub last_share_at: Option<DateTime<Utc>>,
+}
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PoolWorkers {
+    pub workers: Vec<PoolWorker>,
+    /// Hashrate of the whole wallet, used when the miner sets no worker name.
+    pub total_hs: Option<f64>,
 }
 /// One line of the HiveOS-style per-machine message feed: runtime events, job results and audit.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

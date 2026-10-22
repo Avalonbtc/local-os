@@ -72,6 +72,7 @@ impl App {
                 tokio::time::sleep(Duration::from_secs(3600)).await;
             }
         });
+        workers.spawn(self.clone().run_status());
         // All machines feed one writer: one multi-row statement per second instead of
         // one transaction per sample (1 000 machines ≈ 300 samples/s).
         let (sink, samples) = tokio::sync::mpsc::channel::<Observation>(4096);
