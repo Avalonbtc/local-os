@@ -120,6 +120,7 @@ async fn main() -> anyhow::Result<()> {
         remote,
         runtime,
         adapters: Arc::new(adapters::registry()),
+        pools: Some(Arc::new(rig_infrastructure::pools::PublicPools::default())),
     };
     let secure_cookie = std::env::var("RIGDECK_INSECURE_LOCALHOST").as_deref() != Ok("1");
     if !secure_cookie

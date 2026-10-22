@@ -169,7 +169,21 @@ fn context(
         })
         .transpose()?
         .unwrap_or_default();
-    let mut base = json!({"schema_version":1,"adapter":miner.data["adapter"],"url":miner.data["url"],"sha256":miner.data["sha256"],"package_version":miner.data["version"],"coin":coin_symbol,"algorithm":algorithm,"cpus":task.config["cpus"],"warmup_seconds":task.config["warmup_seconds"].as_u64().unwrap_or(60),"verification_seconds":task.config["verification_seconds"].as_u64().unwrap_or(300),"capabilities":miner.data["capabilities"].as_object().cloned().unwrap_or_default()});
+    // The rig fails start-up verification when the miner reports another version, so only a
+    // built-in release pins one. For a mirror or custom package the version is a display label
+    // ("custom" by default), which would never match.
+    let builtin = releases(miner.data["adapter"].as_str().unwrap_or(""))
+        .iter()
+        .any(|r| {
+            miner.data["version"].as_str() == Some(&r.version)
+                && miner.data["url"].as_str() == Some(&r.url)
+        });
+    let pinned_version = if builtin {
+        miner.data["version"].clone()
+    } else {
+        Value::Null
+    };
+    let mut base = json!({"schema_version":1,"adapter":miner.data["adapter"],"url":miner.data["url"],"sha256":miner.data["sha256"],"package_version":pinned_version,"coin":coin_symbol,"algorithm":algorithm,"cpus":task.config["cpus"],"warmup_seconds":task.config["warmup_seconds"].as_u64().unwrap_or(60),"verification_seconds":task.config["verification_seconds"].as_u64().unwrap_or(300),"capabilities":miner.data["capabilities"].as_object().cloned().unwrap_or_default()});
     base["pool_urls"] = urls.clone();
     base["environment"] = json!({"CUSTOM_TEMPLATE":wallet,"CUSTOM_URL":if let Some(a)=urls.as_array(){a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n")}else{url.clone()},"CUSTOM_PASS":password,"CUSTOM_ALGO":algorithm,"CUSTOM_USER_CONFIG":expand(value(task,miner,"user_config",""),&variables),"CUSTOM_COIN":coin_symbol,"WORKER_NAME":machine.name,"CUSTOM_VERSION":miner.data["version"].as_str().unwrap_or("unknown")});
     Ok(Context {
@@ -377,6 +391,43 @@ mod tests {
             "pool configured here"
         );
         assert!(rendered["capabilities"].is_object());
+        assert!(rendered["package_version"].is_null());
+    }
+    #[test]
+    fn only_builtin_releases_pin_the_version_to_verify() {
+        let id = uuid::Uuid::nil();
+        let item = |kind, data| CatalogItem {
+            id,
+            kind,
+            name: "x".into(),
+            data,
+            revision: 1,
+        };
+        let wallet = item(CatalogKind::Wallet, json!({"address":"wallet1"}));
+        let coin = item(CatalogKind::Coin, json!({"symbol":"XMR"}));
+        let host: Machine = serde_json::from_value(json!({"id":id,"name":"worker1","host":"127.0.0.1","port":22,"username":"test","host_key":"test","group":"","tags":[],"is_controller":false,"bmc":null,"policy":{},"created_at":"2026-01-01T00:00:00Z"})).unwrap();
+        let render = |data: Value| {
+            let miner = item(CatalogKind::Miner, data);
+            let task = FlightTask {
+                instance: "cpu-1".into(),
+                wallet_id: id,
+                miner: miner.data.clone(),
+                config: json!({"algorithm":"rx/0","urls":["149.104.4.41:8888"]}),
+            };
+            Xmrig
+                .render(&miner, &task, &wallet, &coin, None, &host)
+                .unwrap()
+        };
+        let release = &releases("xmrig")[0];
+        let builtin = render(
+            json!({"adapter":"xmrig","version":release.version,"url":release.url,"executable":"xmrig"}),
+        );
+        assert_eq!(builtin["package_version"], json!(release.version));
+        let mirror = render(
+            json!({"adapter":"xmrig","version":"custom","url":"https://gitee.com/a/b/xmrig-zero-6.26.0.tar.gz","executable":"xmrig"}),
+        );
+        assert!(mirror["package_version"].is_null());
+        assert_eq!(mirror["environment"]["CUSTOM_VERSION"], "custom");
     }
     #[test]
     fn replace_literal_values_without_shell_interpolation() {

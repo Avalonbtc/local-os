@@ -433,12 +433,16 @@ impl std::fmt::Debug for PushTarget {
 pub struct FarmSettings {
     /// Electricity price per kWh in yuan; the summary bar's daily cost estimate uses it.
     pub electricity_price: f64,
+    /// Offline detection and notifications; settings saved before alerts existed get defaults.
+    #[serde(default)]
+    pub alerts: AlertSettings,
 }
 impl Default for FarmSettings {
     fn default() -> Self {
         // The value the console used before the price became a setting.
         Self {
             electricity_price: 0.56,
+            alerts: AlertSettings::default(),
         }
     }
 }
@@ -447,8 +451,253 @@ impl FarmSettings {
         if !self.electricity_price.is_finite() || !(0.0..=100.0).contains(&self.electricity_price) {
             return Err(crate::Error::Validation("电价需在 0–100 元/度之间".into()));
         }
+        self.alerts.validate()
+    }
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct AlertSettings {
+    /// Minutes without any telemetry (push or SSH) before a machine counts as locally offline.
+    pub local_offline_minutes: u32,
+    /// Minutes the pool must keep showing no hashrate for a running worker before it counts as
+    /// pool-offline. Pools average hashrate over several minutes, so short values misfire.
+    pub pool_offline_minutes: u32,
+    /// Ask the pool's public API whether each worker is hashing (supported pools only).
+    pub pool_check: bool,
+    /// Pop up offline and recovery notices in the web console.
+    pub popup: bool,
+    /// Own xmrig-proxy instances: rigs whose pool address matches are checked per rig through
+    /// the proxy's HTTP API instead of being reported as unsupported.
+    pub proxies: Vec<ProxyApi>,
+}
+impl Default for AlertSettings {
+    fn default() -> Self {
+        Self {
+            local_offline_minutes: 2,
+            pool_offline_minutes: 10,
+            pool_check: true,
+            popup: true,
+            proxies: Vec::new(),
+        }
+    }
+}
+/// An xmrig-proxy instance and its HTTP API (`"http": {"enabled": true, …}` in its config).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ProxyApi {
+    /// Pool address as written in flight sheets, e.g. `mac.icuicu.de:6666`; scheme optional,
+    /// without a port every port of the host matches.
+    pub pool: String,
+    /// Base URL of the proxy's HTTP API, e.g. `http://mac.icuicu.de:4048`.
+    pub api_url: String,
+    /// `http.access-token`. Write-only: never returned; empty keeps the stored token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// Read-only: a token is stored for this proxy.
+    #[serde(default)]
+    pub has_token: bool,
+    /// The stored token, encrypted with the master key. Never accepted from or sent to clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(skip)]
+    pub token_secret: Option<String>,
+}
+impl ProxyApi {
+    /// `host:port` (or `host`) of a pool address, lowercased and without scheme or path.
+    pub fn address(url: &str) -> String {
+        let rest = url.trim().split("://").last().unwrap_or("");
+        rest.split(['/', '?'])
+            .next()
+            .unwrap_or("")
+            .trim_end_matches('.')
+            .to_ascii_lowercase()
+    }
+    /// Whether a flight sheet's pool URL points at this proxy.
+    pub fn serves(&self, pool_url: &str) -> bool {
+        let (mine, theirs) = (Self::address(&self.pool), Self::address(pool_url));
+        if mine.is_empty() {
+            return false;
+        }
+        mine == theirs
+            || (!mine.contains(':') && theirs.rsplit_once(':').is_some_and(|(h, _)| h == mine))
+    }
+}
+impl AlertSettings {
+    pub fn validate(&self) -> crate::Result<()> {
+        if !(1..=1440).contains(&self.local_offline_minutes) {
+            return Err(crate::Error::Validation(
+                "本地离线判定时间需在 1–1440 分钟之间".into(),
+            ));
+        }
+        if !(5..=1440).contains(&self.pool_offline_minutes) {
+            return Err(crate::Error::Validation(
+                "矿池离线判定时间需在 5–1440 分钟之间".into(),
+            ));
+        }
+        if self.proxies.len() > 50 {
+            return Err(crate::Error::Validation(
+                "最多配置 50 个 xmrig-proxy".into(),
+            ));
+        }
+        let plain = |s: &str| {
+            !s.is_empty()
+                && s.len() <= 255
+                && !s.chars().any(|c| c.is_whitespace() || c.is_control())
+        };
+        let mut seen = std::collections::HashSet::new();
+        for proxy in &self.proxies {
+            if !plain(proxy.pool.trim()) || ProxyApi::address(&proxy.pool).is_empty() {
+                return Err(crate::Error::Validation(format!(
+                    "代理的矿池地址无效：{}",
+                    proxy.pool
+                )));
+            }
+            if !seen.insert(ProxyApi::address(&proxy.pool)) {
+                return Err(crate::Error::Validation(format!(
+                    "矿池地址重复：{}",
+                    proxy.pool
+                )));
+            }
+            let api = proxy.api_url.trim();
+            if !plain(api) || !(api.starts_with("http://") || api.starts_with("https://")) {
+                return Err(crate::Error::Validation(format!(
+                    "代理 API 地址需以 http:// 或 https:// 开头：{}",
+                    proxy.api_url
+                )));
+            }
+            if proxy
+                .token
+                .as_ref()
+                .is_some_and(|t| t.len() > 512 || t.chars().any(char::is_control))
+            {
+                return Err(crate::Error::Validation("代理访问令牌无效".into()));
+            }
+        }
         Ok(())
     }
+}
+/// What the console shows for a machine: local offline wins over pool offline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MachineState {
+    Online,
+    LocalOffline,
+    PoolOffline,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalState {
+    Online,
+    Offline,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PoolState {
+    Online,
+    Offline,
+    /// Every running instance mines on a pool without a supported API (own proxy, IP:port…).
+    Unsupported,
+    /// No instance is meant to be mining, the check is off, or no pool answer yet.
+    Unknown,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PoolCheckResult {
+    /// The pool sees this worker hashing.
+    Ok,
+    /// The pool does not list this worker.
+    Missing,
+    /// The pool lists the worker without hashrate or recent shares.
+    Zero,
+    Unsupported,
+    /// The pool lists none of this account's machines by name but the wallet is hashing, as
+    /// behind xmrig-proxy or a pool that names workers otherwise: one machine cannot be told
+    /// apart, so this never counts as offline.
+    Ambiguous,
+    /// The pool API could not be read; never counts as offline.
+    Error,
+}
+/// One running miner instance as its pool sees it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PoolCheck {
+    pub instance: String,
+    pub pool_url: Option<String>,
+    /// Supported pool API used (`kryptex`, `supportxmr`, `nanopool`, `hashvault`).
+    pub provider: Option<String>,
+    /// Worker name looked for on the pool.
+    pub worker: Option<String>,
+    pub result: PoolCheckResult,
+    pub hashrate_hs: Option<f64>,
+    pub last_share_at: Option<DateTime<Utc>>,
+    pub message: String,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct MachineStatus {
+    pub machine_id: Uuid,
+    pub state: MachineState,
+    pub local: LocalState,
+    /// Last telemetry sample without an error, by controller time.
+    pub last_seen_at: Option<DateTime<Utc>>,
+    pub local_since: DateTime<Utc>,
+    pub pool: PoolState,
+    pub pool_since: DateTime<Utc>,
+    /// When the pool first showed a running worker idle; the debounce for pool offline.
+    pub pool_bad_since: Option<DateTime<Utc>>,
+    pub pool_checks: Vec<PoolCheck>,
+    pub checked_at: DateTime<Utc>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AlertKind {
+    Local,
+    Pool,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AlertEvent {
+    Offline,
+    Recovered,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct NewAlert {
+    pub machine_id: Uuid,
+    pub kind: AlertKind,
+    pub event: AlertEvent,
+    pub at: DateTime<Utc>,
+    pub message: String,
+}
+/// One offline or recovery notice; ids increase, so clients poll with `after`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct StatusAlert {
+    pub id: i64,
+    pub machine_id: Uuid,
+    pub machine_name: String,
+    pub kind: AlertKind,
+    pub event: AlertEvent,
+    pub at: DateTime<Utc>,
+    pub message: String,
+}
+/// An account on a pool with a supported public miner API.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PoolAccount {
+    pub provider: String,
+    pub coin: String,
+    pub wallet: String,
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct PoolWorker {
+    pub name: String,
+    pub hashrate_hs: f64,
+    pub last_share_at: Option<DateTime<Utc>>,
+}
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PoolWorkers {
+    pub workers: Vec<PoolWorker>,
+    /// Hashrate of the whole wallet, used when the miner sets no worker name.
+    pub total_hs: Option<f64>,
+    /// An xmrig-proxy with no live connection to its pool: nothing it collects arrives there.
+    pub upstream_down: bool,
+    /// Every miner is listed under a name RigDeck can derive (xmrig-proxy in `rig_id` or `user`
+    /// mode: the full login), so a name that is not listed means that miner is gone.
+    pub exact_names: bool,
 }
 /// One line of the HiveOS-style per-machine message feed: runtime events, job results and audit.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

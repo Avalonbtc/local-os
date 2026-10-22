@@ -207,6 +207,16 @@ fn validate_pool_urls(config: &Value) -> Result<()> {
                     })
                 }) =>
         {
+            // A pool's web page (https://pool.example.com/XMR) is not a stratum endpoint; the
+            // miner would start, never connect and fail start-up verification minutes later.
+            if let Some(page) = urls.iter().filter_map(Value::as_str).find(|u| {
+                let lower = u.to_ascii_lowercase();
+                lower.starts_with("http://") || lower.starts_with("https://")
+            }) {
+                return Err(Error::Validation(format!(
+                    "「{page}」是矿池网页地址，不是挖矿连接地址；请填写矿池提供的 stratum 地址，如 stratum+tcp://主机:端口"
+                )));
+            }
             let mut seen = HashSet::new();
             if urls.iter().all(|u| seen.insert(u.as_str())) {
                 Ok(())
@@ -272,5 +282,7 @@ mod tests {
         assert!(validate_pool_urls(&json!({"urls":["a b"]})).is_err());
         assert!(validate_pool_urls(&json!({"urls":["x","x"]})).is_err());
         assert!(validate_pool_urls(&json!({"urls":"x"})).is_err());
+        assert!(validate_pool_urls(&json!({"urls":["https://pool.kryptex.com/XMR"]})).is_err());
+        assert!(validate_pool_urls(&json!({"urls":["xmr.kryptex.network:7029"]})).is_ok());
     }
 }

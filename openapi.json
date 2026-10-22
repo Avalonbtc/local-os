@@ -244,6 +244,57 @@
         "title": "AgentStatus",
         "type": "object"
       },
+      "AlertEvent": {
+        "enum": [
+          "offline",
+          "recovered"
+        ],
+        "type": "string"
+      },
+      "AlertKind": {
+        "enum": [
+          "local",
+          "pool"
+        ],
+        "type": "string"
+      },
+      "AlertSettings": {
+        "properties": {
+          "local_offline_minutes": {
+            "default": 2,
+            "description": "Minutes without any telemetry (push or SSH) before a machine counts as locally offline.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pool_check": {
+            "default": true,
+            "description": "Ask the pool's public API whether each worker is hashing (supported pools only).",
+            "type": "boolean"
+          },
+          "pool_offline_minutes": {
+            "default": 10,
+            "description": "Minutes the pool must keep showing no hashrate for a running worker before it counts as\npool-offline. Pools average hashrate over several minutes, so short values misfire.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "popup": {
+            "default": true,
+            "description": "Pop up offline and recovery notices in the web console.",
+            "type": "boolean"
+          },
+          "proxies": {
+            "default": [],
+            "description": "Own xmrig-proxy instances: rigs whose pool address matches are checked per rig through\nthe proxy's HTTP API instead of being reported as unsupported.",
+            "items": {
+              "$ref": "#/components/schemas/ProxyApi"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
       "AmdOc": {
         "properties": {
           "core_clock": {
@@ -630,6 +681,17 @@
       "FarmSettings": {
         "description": "Farm-wide preferences edited under 设定 (HiveOS keeps the electricity tariff in farm settings).",
         "properties": {
+          "alerts": {
+            "$ref": "#/components/schemas/AlertSettings",
+            "default": {
+              "local_offline_minutes": 2,
+              "pool_check": true,
+              "pool_offline_minutes": 10,
+              "popup": true,
+              "proxies": []
+            },
+            "description": "Offline detection and notifications; settings saved before alerts existed get defaults."
+          },
           "electricity_price": {
             "description": "Electricity price per kWh in yuan; the summary bar's daily cost estimate uses it.",
             "format": "double",
@@ -884,6 +946,13 @@
           "output_truncated"
         ],
         "type": "object"
+      },
+      "LocalState": {
+        "enum": [
+          "online",
+          "offline"
+        ],
+        "type": "string"
       },
       "Login": {
         "properties": {
@@ -1149,6 +1218,78 @@
         "title": "MachineMessage",
         "type": "object"
       },
+      "MachineState": {
+        "description": "What the console shows for a machine: local offline wins over pool offline.",
+        "enum": [
+          "online",
+          "local_offline",
+          "pool_offline"
+        ],
+        "type": "string"
+      },
+      "MachineStatus": {
+        "properties": {
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "description": "Last telemetry sample without an error, by controller time.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "local": {
+            "$ref": "#/components/schemas/LocalState"
+          },
+          "local_since": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "machine_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "pool": {
+            "$ref": "#/components/schemas/PoolState"
+          },
+          "pool_bad_since": {
+            "description": "When the pool first showed a running worker idle; the debounce for pool offline.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pool_checks": {
+            "items": {
+              "$ref": "#/components/schemas/PoolCheck"
+            },
+            "type": "array"
+          },
+          "pool_since": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/MachineState"
+          }
+        },
+        "required": [
+          "machine_id",
+          "state",
+          "local",
+          "local_since",
+          "pool",
+          "pool_since",
+          "pool_checks",
+          "checked_at"
+        ],
+        "title": "MachineStatus",
+        "type": "object"
+      },
       "MessageDismiss": {
         "description": "One line of the HiveOS-style per-machine message feed: runtime events, job results and audit.",
         "properties": {
@@ -1293,6 +1434,146 @@
         "title": "Observation",
         "type": "object"
       },
+      "PoolCheck": {
+        "description": "One running miner instance as its pool sees it.",
+        "properties": {
+          "hashrate_hs": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "instance": {
+            "type": "string"
+          },
+          "last_share_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "pool_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider": {
+            "description": "Supported pool API used (`kryptex`, `supportxmr`, `nanopool`, `hashvault`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/PoolCheckResult"
+          },
+          "worker": {
+            "description": "Worker name looked for on the pool.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "instance",
+          "result",
+          "message"
+        ],
+        "type": "object"
+      },
+      "PoolCheckResult": {
+        "oneOf": [
+          {
+            "enum": [
+              "unsupported"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "ok",
+            "description": "The pool sees this worker hashing.",
+            "type": "string"
+          },
+          {
+            "const": "missing",
+            "description": "The pool does not list this worker.",
+            "type": "string"
+          },
+          {
+            "const": "zero",
+            "description": "The pool lists the worker without hashrate or recent shares.",
+            "type": "string"
+          },
+          {
+            "const": "ambiguous",
+            "description": "The pool lists none of this account's machines by name but the wallet is hashing, as\nbehind xmrig-proxy or a pool that names workers otherwise: one machine cannot be told\napart, so this never counts as offline.",
+            "type": "string"
+          },
+          {
+            "const": "error",
+            "description": "The pool API could not be read; never counts as offline.",
+            "type": "string"
+          }
+        ]
+      },
+      "PoolState": {
+        "oneOf": [
+          {
+            "enum": [
+              "online",
+              "offline"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "unsupported",
+            "description": "Every running instance mines on a pool without a supported API (own proxy, IP:port…).",
+            "type": "string"
+          },
+          {
+            "const": "unknown",
+            "description": "No instance is meant to be mining, the check is off, or no pool answer yet.",
+            "type": "string"
+          }
+        ]
+      },
+      "ProxyApi": {
+        "description": "An xmrig-proxy instance and its HTTP API (`\"http\": {\"enabled\": true, …}` in its config).",
+        "properties": {
+          "api_url": {
+            "description": "Base URL of the proxy's HTTP API, e.g. `http://mac.icuicu.de:4048`.",
+            "type": "string"
+          },
+          "has_token": {
+            "default": false,
+            "description": "Read-only: a token is stored for this proxy.",
+            "type": "boolean"
+          },
+          "pool": {
+            "description": "Pool address as written in flight sheets, e.g. `mac.icuicu.de:6666`; scheme optional,\nwithout a port every port of the host matches.",
+            "type": "string"
+          },
+          "token": {
+            "description": "`http.access-token`. Write-only: never returned; empty keeps the stored token.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "pool",
+          "api_url"
+        ],
+        "type": "object"
+      },
       "ResolveTarget": {
         "properties": {
           "decision": {
@@ -1415,6 +1696,46 @@
           "port"
         ],
         "title": "SshProbeResult",
+        "type": "object"
+      },
+      "StatusAlert": {
+        "description": "One offline or recovery notice; ids increase, so clients poll with `after`.",
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "event": {
+            "$ref": "#/components/schemas/AlertEvent"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AlertKind"
+          },
+          "machine_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "machine_name": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "machine_id",
+          "machine_name",
+          "kind",
+          "event",
+          "at",
+          "message"
+        ],
+        "title": "StatusAlert",
         "type": "object"
       },
       "TokenInfo": {
@@ -1554,6 +1875,67 @@
           }
         ]
       }
+    },
+    "/api/v1/alerts": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StatusAlert"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Forbidden or invalid CSRF"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict"
+          },
+          "503": {
+            "description": "Dependency unavailable"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "query",
+          "name": "after",
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "in": "query",
+          "name": "limit",
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ]
     },
     "/api/v1/audit": {
       "get": {
@@ -3203,6 +3585,51 @@
               }
             },
             "description": "Success"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/status": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MachineStatus"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Forbidden or invalid CSRF"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict"
+          },
+          "503": {
+            "description": "Dependency unavailable"
           }
         },
         "security": [

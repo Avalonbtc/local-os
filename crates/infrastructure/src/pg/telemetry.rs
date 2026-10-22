@@ -474,6 +474,7 @@ impl TelemetryRepository for PgStore {
             "DELETE FROM sessions WHERE expires_at<now()",
             "DELETE FROM login_limits WHERE window_start<now()-interval '1 day'",
             "DELETE FROM machine_events WHERE at<now()-interval '90 days'",
+            "DELETE FROM status_alerts WHERE at<now()-interval '90 days'",
         ] {
             sqlx::query(query).execute(&self.pool).await.map_err(db)?;
         }

@@ -57,6 +57,7 @@ async fn install_keys_enroll_reinstall_limit_revoke_and_authenticate_agents() {
             port: 0,
         }))),
         agents: Arc::new(AgentHub::new("https://panel.example.com", None)),
+        pools: None,
     };
     let host = format!("rig{}", &Uuid::new_v4().simple().to_string()[..8]);
 

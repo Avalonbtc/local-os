@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
 
+const ALERTS = { local_offline_minutes: 2, pool_offline_minutes: 10, pool_check: true, popup: true, proxies: [] };
+
 // The daily cost estimate uses the farm's electricity price, which the user sets under 设定 → 矿场.
 test("electricity price is a farm setting used by the daily cost estimate", async ({ page }) => {
   const id = "8d0f4c2e-5b7a-4e19-a3c6-1f2e9d8b7a60";
@@ -12,7 +14,8 @@ test("electricity price is a farm setting used by the daily cost estimate", asyn
         saved.push(route.request().postDataJSON());
         price = (saved.at(-1) as { electricity_price: number }).electricity_price;
       }
-      return route.fulfill({ json: { electricity_price: price } });
+      // Offline-alert settings come back with every read, as from a real controller.
+      return route.fulfill({ json: { electricity_price: price, alerts: ALERTS } });
     }
     let body: unknown = [];
     if (path.endsWith("/me")) body = { actor: { id, name: "fixture", token_id: null }, csrf: "test", expires_at: "2099-01-01" };
@@ -35,7 +38,7 @@ test("electricity price is a farm setting used by the daily cost estimate", asyn
   await expect(input).toHaveValue("1.0000");
   await input.fill("0.35");
   await page.getByRole("button", { name: /保\s*存/ }).click();
-  await expect.poll(() => saved).toEqual([{ electricity_price: 0.35 }]);
+  await expect.poll(() => saved).toEqual([{ electricity_price: 0.35, alerts: ALERTS }]);
 
   await page.locator('nav.rd-tabs a[href="/machines"]').click();
   // 0.5 kW × 24 h × 0.35 元/度

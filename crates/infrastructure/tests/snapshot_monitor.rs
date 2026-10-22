@@ -124,6 +124,7 @@ async fn fresh_snapshot_replaces_privileged_collection_and_delivers_events_and_p
         adapters: Arc::new(adapters::registry()),
         agents: Default::default(),
         push: Default::default(),
+        pools: None,
     };
     let monitor = tokio::spawn(app.clone().run_monitor());
     tokio::time::sleep(Duration::from_secs(23)).await;

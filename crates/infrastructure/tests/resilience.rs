@@ -92,6 +92,7 @@ async fn offline_hosts_and_transient_heartbeat_failure_do_not_interrupt_healthy_
         adapters: Arc::new(adapters::registry()),
         agents: Default::default(),
         push: Default::default(),
+        pools: None,
     };
     let secret = vault
         .encrypt(&Credential::Password {

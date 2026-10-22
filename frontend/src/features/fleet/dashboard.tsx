@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   Button,
@@ -28,7 +28,7 @@ import {
   StarOutlined,
   UnorderedListOutlined,
 } from "@ant-design/icons";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   data,
   isFresh,
@@ -41,7 +41,9 @@ import {
   useRefresh,
   useFarmSettings,
   useFleetTelemetry,
+  useMachineStatus,
   type Machine,
+  type MachineStatus,
   type Observation,
 } from "../../shared/api";
 import { hashrate, number, QueryState } from "../../shared/ui";
@@ -50,7 +52,7 @@ import { BatchAddModal } from "./import";
 import { EnrollModal } from "./enroll";
 import { CoinBadge, IconBolt, IconCpu, IconEmptyRigs, IconGpu, IconPickaxe, IconRig, IconServer, IconYuan } from "../../shared/icons";
 
-type Filter = "all" | "online" | "offline" | "problems" | "favorites";
+type Filter = "all" | "online" | "offline" | "pool" | "problems" | "favorites";
 type View = "dense" | "comfortable" | "grid";
 type Sort = "name" | "uptime" | "hashrate" | "load";
 
@@ -66,6 +68,9 @@ type GpuReading = {
 type FleetRow = {
   machine: Machine;
   online: boolean;
+  /** Running locally, but the pool has not seen the worker hash for the configured time. */
+  poolOffline: boolean;
+  poolNote?: string;
   issue: boolean;
   issues: string[];
   address?: string;
@@ -86,6 +91,7 @@ type FleetRow = {
 function model(
   machine: Machine,
   observations: Observation[] | undefined,
+  status: MachineStatus | undefined,
 ): FleetRow {
   const system = latest(observations, machine.id, "system");
   const mining = latest(observations, machine.id, "mining");
@@ -113,10 +119,18 @@ function model(
     else if (instance.stats?.connected === false)
       issues.push(`${instance.instance}：矿池未连接`);
   }
+  const poolOffline = status?.state === "pool_offline";
+  const poolNote = status?.pool_checks
+    ?.filter((check) => check.result === "missing" || check.result === "zero")
+    .map((check) => `${check.instance}：${check.message}`)
+    .join("；");
+  if (poolOffline) issues.push(`矿池离线：${poolNote || "矿池看不到算力"}`);
   const addresses = Array.isArray(systemData.addresses) ? systemData.addresses : [];
   return {
     machine,
     online,
+    poolOffline,
+    poolNote: poolOffline ? poolNote : undefined,
     issue: issues.length > 0,
     issues,
     address: addresses[0]?.address,
@@ -165,22 +179,31 @@ function uptimeLabel(seconds?: number) {
 }
 
 // The summary bar and the list render the same rows; build them once per data refresh.
-let rowCache: { machines?: Machine[]; telemetry?: Observation[]; rows: FleetRow[] } = {
+let rowCache: {
+  machines?: Machine[];
+  telemetry?: Observation[];
+  statuses?: MachineStatus[];
+  rows: FleetRow[];
+} = {
   rows: [],
 };
-function fleetRows(machines?: Machine[], telemetry?: Observation[]) {
-  if (rowCache.machines !== machines || rowCache.telemetry !== telemetry)
+function fleetRows(machines?: Machine[], telemetry?: Observation[], statuses?: MachineStatus[]) {
+  if (rowCache.machines !== machines || rowCache.telemetry !== telemetry || rowCache.statuses !== statuses) {
+    const byMachine = new Map((statuses ?? []).map((status) => [status.machine_id, status]));
     rowCache = {
       machines,
       telemetry,
-      rows: (machines ?? []).map((machine) => model(machine, telemetry)),
+      statuses,
+      rows: (machines ?? []).map((machine) => model(machine, telemetry, byMachine.get(machine.id))),
     };
+  }
   return rowCache.rows;
 }
 
 export function FleetDataCache() {
   useMachines();
   useFleetTelemetry();
+  useMachineStatus();
   return null;
 }
 
@@ -198,8 +221,12 @@ export function FleetSummary() {
   const agents = useAgents();
   const machines = useMachines();
   const telemetry = useFleetTelemetry();
+  const statuses = useMachineStatus();
   const price = useFarmSettings().data?.electricity_price;
-  const rows = fleetRows(machines.data, telemetry.data);
+  const rows = fleetRows(machines.data, telemetry.data, statuses.data);
+  const poolOffline = rows.filter((row) => row.poolOffline).length;
+  const poolChecked = (statuses.data ?? []).filter((s) => s.pool === "online" || s.pool === "offline").length;
+  const poolUnsupported = (statuses.data ?? []).filter((s) => s.pool === "unsupported").length;
   const online = rows.filter((row) => row.online).length;
   const threads = rows.reduce((sum, row) => sum + (row.logicalCpus ?? 0), 0);
   const gpus = rows.flatMap((row) => (row.online ? row.gpus : []));
@@ -252,6 +279,19 @@ export function FleetSummary() {
             <IconCpu size={13} />CPU 线程 <small>告警</small>
           </span>
         </div>
+        <Link
+          className="hive-stat hive-stat-link"
+          to="/machines?status=pool"
+          title={`矿池侧确认：${poolChecked} 台已核对，${poolUnsupported} 台无法单机检测（自建代理、IP:端口，或经 xmrig-proxy 汇总后矿池只看到一个 worker）。点击筛选矿池离线的矿机`}
+        >
+          <div className="hive-stat-line">
+            <strong className={poolOffline ? "stat-red" : ""}>{statuses.data ? poolOffline : "—"}</strong>
+            <small>/{poolChecked}</small>
+          </div>
+          <span>
+            <IconPickaxe size={13} />矿池离线 <small>{poolUnsupported ? `${poolUnsupported} 台不支持` : "已核对"}</small>
+          </span>
+        </Link>
         {gpus.length > 0 && (
           <div className="hive-stat hive-stat-green">
             <div className="hive-stat-line">
@@ -450,8 +490,10 @@ function MiningCell({ row }: { row: FleetRow }) {
 export function FleetPage() {
   const machines = useMachines();
   const telemetry = useFleetTelemetry();
+  const statuses = useMachineStatus();
   const refresh = useRefresh();
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [group, setGroup] = useState<string>();
@@ -477,7 +519,17 @@ export function FleetPage() {
   const [importing, setImporting] = useState(false);
   const [batch, setBatch] = useState("");
   const [help, setHelp] = useState(false);
-  const rows = fleetRows(machines.data, telemetry.data);
+  const rows = fleetRows(machines.data, telemetry.data, statuses.data);
+  // The summary band's 矿池离线 card links here with ?status=pool.
+  useEffect(() => {
+    if (params.get("status") !== "pool") return;
+    setFilter("pool");
+    setPage(1);
+    setParams((next) => {
+      next.delete("status");
+      return next;
+    }, { replace: true });
+  }, [params, setParams]);
   const groups = [
     ...new Set(rows.map((row) => row.machine.group).filter(Boolean)),
   ];
@@ -494,6 +546,7 @@ export function FleetPage() {
         return false;
       if (filter === "online") return row.online;
       if (filter === "offline") return !row.online;
+      if (filter === "pool") return row.poolOffline;
       if (filter === "problems") return row.issue;
       if (filter === "favorites") return favorites.includes(machine.id);
       return true;
@@ -559,7 +612,7 @@ export function FleetPage() {
         [
           row.machine.name,
           row.machine.host,
-          row.online ? "在线" : "离线",
+          row.online ? (row.poolOffline ? "矿池离线" : "在线") : "离线",
           uptimeLabel(row.uptime),
           row.cpuPct,
           row.hashrateHs,
@@ -608,6 +661,7 @@ export function FleetPage() {
                 ["all", "所有", rows.length],
                 ["online", "在线", rows.filter((row) => row.online).length],
                 ["offline", "掉线", rows.filter((row) => !row.online).length],
+                ["pool", "矿池离线", rows.filter((row) => row.poolOffline).length],
                 ["problems", "有问题", rows.filter((row) => row.issue).length],
                 ["favorites", "收藏", favorites.length],
               ] as [Filter, string, number][]
@@ -883,6 +937,11 @@ export function FleetPage() {
                   <small className="hive-machine-ip">
                     {row.address ?? row.machine.host}
                   </small>
+                  {row.poolOffline && (
+                    <Tooltip title={row.poolNote || "矿池看不到这台矿机的算力"}>
+                      <small className="hive-pool-offline">矿池离线</small>
+                    </Tooltip>
+                  )}
                 </div>
                 <div className="hive-machine-alert">
                   {row.issue && (

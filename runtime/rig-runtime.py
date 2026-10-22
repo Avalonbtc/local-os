@@ -32,7 +32,7 @@ import urllib.request
 import uuid
 import zlib
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 ROOT = Path(os.environ.get("RIG_RUNTIME_ROOT", "/var/lib/rigdeck"))
 # Controller reads this with a plain `cat` (no Python start-up, no sudo). /run is tmpfs.
 SNAPSHOT_DIR = Path(os.environ.get("RIG_SNAPSHOT_DIR", "/run/rigdeck"))
@@ -479,7 +479,7 @@ def normalize(config, raw):
         base.update(hashrate_hs=rate, algorithm=raw.get("algo"), version=raw.get("version"), uptime=raw.get("uptime"), accepted=results.get("shares_good"), rejected=(results.get("shares_total", 0) - results.get("shares_good", 0)), connected=bool(connection.get("pool")) and connection.get("uptime", 0) > 0)
     elif adapter == "srbminer":
         algorithms = raw.get("algorithms", [])
-        match = next((x for x in algorithms if x.get("name", x.get("algorithm")) == config.get("algorithm")), None)
+        match = next((x for x in algorithms if algorithm_key(x.get("name", x.get("algorithm"))) == algorithm_key(config.get("algorithm"))), None)
         if match is None:
             raise ValueError("SRBMiner API algorithm not present; unsupported schema or wrong algorithm")
         rates = match.get("hashrate", {}) if isinstance(match.get("hashrate"), dict) else {}
@@ -776,6 +776,40 @@ def prepare(config):
     return version
 
 
+# Names miners accept for the same algorithm: XMRig takes `--algo randomx` but reports `rx/0`,
+# SRBMiner names it `randomx`. The flight sheet may use either.
+ALGORITHM_ALIASES = {"randomx": "rx/0", "rx": "rx/0", "randomwow": "rx/wow", "randomarq": "rx/arq"}
+
+
+def algorithm_key(name):
+    key = str(name or "").strip().lower()
+    return ALGORITHM_ALIASES.get(key, key)
+
+
+def verification_failure(cfg, check):
+    """Why one instance failed start-up verification, in words the operator can act on."""
+    stats = check.get("stats") or {}
+    if not check:
+        return "没有取得矿工状态"
+    if not check.get("process_running"):
+        return "矿工进程没有运行（启动后退出，请查看矿工日志）"
+    if check.get("error") and not stats:
+        return f"读不到矿工统计：{str(check['error'])[:200]}"
+    if check.get("pool_connected") is False:
+        return "没有连上矿池，请检查矿池地址（stratum+tcp://主机:端口）、钱包和网络"
+    if check.get("algorithm_match") is False:
+        return f"算法不符（飞行表 {cfg.get('algorithm')}，矿工报告 {stats.get('algorithm')}）"
+    if check.get("version_match") is False:
+        return f"版本不符（飞行表 {cfg.get('package_version')}，矿工报告 {stats.get('version')}）"
+    if not check.get("version_reported") and (cfg.get("package_version") or cfg.get("adapter") != "hive-custom"):
+        return "矿工没有报告版本"
+    if stats.get("hashrate_hs") is None:
+        return "还没有算力数据"
+    if not check.get("positive_hashrate"):
+        return "算力为 0"
+    return "未通过验证"
+
+
 def check_port(port, previous=None):
     with socket.socket() as sock:
         try:
@@ -854,16 +888,17 @@ def apply_deployment(deployment, operation):
                 valid = sample_result["process_alive"] and (version_reported or not version_required) and stats.get("hashrate_hs") is not None and stats["hashrate_hs"] > 0
                 if version_match is False:
                     valid = False
-                if expected and algorithm != expected:
+                if expected and algorithm_key(algorithm) != algorithm_key(expected):
                     valid = False
                 if stats.get("connected") is False:
                     valid = False
                 # Deployment completion is independent of the pool share interval.
                 # Unknown connection/share evidence stays unknown in validation.
                 verified[name] = {"config_delivered": True, "process_running": sample_result["process_alive"],
+                                  "error": sample_result.get("error"),
                                   "version_reported": version_reported, "running_version_id": sample_result["version_id"],
                                   "version_match": version_match,
-                                  "algorithm_match": algorithm == expected if expected else None,
+                                  "algorithm_match": algorithm_key(algorithm) == algorithm_key(expected) if expected else None,
                                   "positive_hashrate": (stats.get("hashrate_hs") or 0) > 0,
                                   "pool_connected": stats.get("connected"), "accepted_shares": stats.get("accepted"),
                                   "valid": valid, "stats": stats}
@@ -876,7 +911,10 @@ def apply_deployment(deployment, operation):
                      sheet_id=deployment.get("sheet_id"), operation=operation, instances=sorted(versions))
                 return {"versions": versions, "validation": verified}
             time.sleep(2)
-        raise RuntimeError("Startup verification timed out; see per-instance validation")
+        # The panel shows only this message, so it names what each instance failed.
+        failures = "；".join(f"{name}：{verification_failure(cfg, verified.get(cfg['instance'], {}))}"
+                            for cfg in configs if not verified.get(cfg["instance"], {}).get("valid"))
+        raise RuntimeError(f"启动验证超时（{max(c.get('verification_seconds', 300) for c in configs)} 秒）：{failures}")
     except BaseException:
         rollback = {}
         for name in reversed(changed):
