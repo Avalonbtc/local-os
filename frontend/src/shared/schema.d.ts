@@ -81,6 +81,89 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/alerts": {
+        parameters: {
+            query?: {
+                after?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: {
+                    after?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Success */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StatusAlert"][];
+                    };
+                };
+                /** @description Validation error */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Authentication required */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden or invalid CSRF */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Dependency unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit": {
         parameters: {
             query?: never;
@@ -2793,6 +2876,83 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Success */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MachineStatus"][];
+                    };
+                };
+                /** @description Validation error */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Authentication required */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden or invalid CSRF */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Dependency unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/telemetry": {
         parameters: {
             query?: {
@@ -3183,6 +3343,41 @@ export interface components {
             /** Format: uint32 */
             schema_version: number;
         };
+        /** @enum {string} */
+        AlertEvent: "offline" | "recovered";
+        /** @enum {string} */
+        AlertKind: "local" | "pool";
+        AlertSettings: {
+            /**
+             * Format: uint32
+             * @description Minutes without any telemetry (push or SSH) before a machine counts as locally offline.
+             * @default 2
+             */
+            local_offline_minutes: number;
+            /**
+             * @description Ask the pool's public API whether each worker is hashing (supported pools only).
+             * @default true
+             */
+            pool_check: boolean;
+            /**
+             * Format: uint32
+             * @description Minutes the pool must keep showing no hashrate for a running worker before it counts as
+             *     pool-offline. Pools average hashrate over several minutes, so short values misfire.
+             * @default 10
+             */
+            pool_offline_minutes: number;
+            /**
+             * @description Pop up offline and recovery notices in the web console.
+             * @default true
+             */
+            popup: boolean;
+            /**
+             * @description Own xmrig-proxy instances: rigs whose pool address matches are checked per rig through
+             *     the proxy's HTTP API instead of being reported as unsupported.
+             * @default []
+             */
+            proxies: components["schemas"]["ProxyApi"][];
+        };
         AmdOc: {
             /**
              * @description CORE_CLOCK, MHz.
@@ -3384,6 +3579,17 @@ export interface components {
          */
         FarmSettings: {
             /**
+             * @description Offline detection and notifications; settings saved before alerts existed get defaults.
+             * @default {
+             *       "local_offline_minutes": 2,
+             *       "pool_check": true,
+             *       "pool_offline_minutes": 10,
+             *       "popup": true,
+             *       "proxies": []
+             *     }
+             */
+            alerts: components["schemas"]["AlertSettings"];
+            /**
              * Format: double
              * @description Electricity price per kWh in yuan; the summary bar's daily cost estimate uses it.
              */
@@ -3476,6 +3682,8 @@ export interface components {
             result?: unknown;
             status: string;
         };
+        /** @enum {string} */
+        LocalState: "online" | "offline";
         /** Login */
         Login: {
             password: string;
@@ -3566,6 +3774,36 @@ export interface components {
             source: string;
         };
         /**
+         * @description What the console shows for a machine: local offline wins over pool offline.
+         * @enum {string}
+         */
+        MachineState: "online" | "local_offline" | "pool_offline";
+        /** MachineStatus */
+        MachineStatus: {
+            /** Format: date-time */
+            checked_at: string;
+            /**
+             * Format: date-time
+             * @description Last telemetry sample without an error, by controller time.
+             */
+            last_seen_at?: string | null;
+            local: components["schemas"]["LocalState"];
+            /** Format: date-time */
+            local_since: string;
+            /** Format: uuid */
+            machine_id: string;
+            pool: components["schemas"]["PoolState"];
+            /**
+             * Format: date-time
+             * @description When the pool first showed a running worker idle; the debounce for pool offline.
+             */
+            pool_bad_since?: string | null;
+            pool_checks: components["schemas"]["PoolCheck"][];
+            /** Format: date-time */
+            pool_since: string;
+            state: components["schemas"]["MachineState"];
+        };
+        /**
          * MessageDismiss
          * @description One line of the HiveOS-style per-machine message feed: runtime events, job results and audit.
          */
@@ -3628,6 +3866,40 @@ export interface components {
             /** Format: date-time */
             observed_at: string;
         };
+        /** @description One running miner instance as its pool sees it. */
+        PoolCheck: {
+            /** Format: double */
+            hashrate_hs?: number | null;
+            instance: string;
+            /** Format: date-time */
+            last_share_at?: string | null;
+            message: string;
+            pool_url?: string | null;
+            /** @description Supported pool API used (`kryptex`, `supportxmr`, `nanopool`, `hashvault`). */
+            provider?: string | null;
+            result: components["schemas"]["PoolCheckResult"];
+            /** @description Worker name looked for on the pool. */
+            worker?: string | null;
+        };
+        PoolCheckResult: "unsupported" | "ok" | "missing" | "zero" | "ambiguous" | "error";
+        PoolState: ("online" | "offline") | "unsupported" | "unknown";
+        /** @description An xmrig-proxy instance and its HTTP API (`"http": {"enabled": true, …}` in its config). */
+        ProxyApi: {
+            /** @description Base URL of the proxy's HTTP API, e.g. `http://mac.icuicu.de:4048`. */
+            api_url: string;
+            /**
+             * @description Read-only: a token is stored for this proxy.
+             * @default false
+             */
+            has_token: boolean;
+            /**
+             * @description Pool address as written in flight sheets, e.g. `mac.icuicu.de:6666`; scheme optional,
+             *     without a port every port of the host matches.
+             */
+            pool: string;
+            /** @description `http.access-token`. Write-only: never returned; empty keeps the stored token. */
+            token?: string | null;
+        };
         /** ResolveTarget */
         ResolveTarget: {
             decision: string;
@@ -3665,6 +3937,22 @@ export interface components {
             host: string;
             /** Format: uint16 */
             port: number;
+        };
+        /**
+         * StatusAlert
+         * @description One offline or recovery notice; ids increase, so clients poll with `after`.
+         */
+        StatusAlert: {
+            /** Format: date-time */
+            at: string;
+            event: components["schemas"]["AlertEvent"];
+            /** Format: int64 */
+            id: number;
+            kind: components["schemas"]["AlertKind"];
+            /** Format: uuid */
+            machine_id: string;
+            machine_name: string;
+            message: string;
         };
         /** TokenInfo */
         TokenInfo: {

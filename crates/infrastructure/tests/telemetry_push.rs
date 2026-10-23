@@ -139,6 +139,7 @@ async fn pushed_snapshots_replace_ssh_reads_with_patches_events_and_policy() {
             url: None,
             port: 8091,
         }))),
+        pools: None,
     };
     let target = app.push_target(machine).unwrap();
     assert_eq!(target.key, vault.push_key(machine).unwrap());

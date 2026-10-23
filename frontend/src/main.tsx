@@ -34,6 +34,7 @@ import {
 import { client, setCsrf, unwrap, useMachines } from "./shared/api";
 import { setSelection, useSelection } from "./shared/selection";
 import { Login } from "./features/identity";
+import { AlertWatcher } from "./features/alerts";
 import { FleetPage, FleetSummary, FleetDataCache, MachineDetail } from "./features/fleet";
 import "./styles.css";
 
@@ -229,6 +230,7 @@ function Root() {
   return (
     <div className="rd-shell">
       <FleetDataCache />
+      <AlertWatcher />
       <TopBar username={session.data.actor.name} logout={logout} />
       {farmPage && (
         <>

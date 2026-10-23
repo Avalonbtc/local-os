@@ -9,6 +9,7 @@ pub mod jobs;
 pub mod mining;
 pub mod push;
 pub mod settings;
+pub mod status;
 pub mod telemetry;
 use rig_domain::*;
 use std::{collections::HashMap, sync::Arc};
@@ -26,6 +27,8 @@ pub struct App {
     pub push: Arc<push::PushHub>,
     /// Coin icon directory, links and CoinGecko; `None` leaves only console-added icons.
     pub icons: Option<Arc<dyn IconSource>>,
+    /// Pool miner APIs for pool-side offline detection; `None` checks local status only.
+    pub pools: Option<Arc<dyn PoolStats>>,
 }
 impl App {
     pub async fn credential(&self, machine: uuid::Uuid, bmc: bool) -> Result<Credential> {

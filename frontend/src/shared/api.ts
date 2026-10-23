@@ -22,6 +22,8 @@ export type CoinIcon = components["schemas"]["CoinIcon"];
 export type CoinIconList = components["schemas"]["CoinIconList"];
 export type CoinIconInput = components["schemas"]["CoinIconInput"];
 export type CoinCandidate = components["schemas"]["CoinCandidate"];
+export type MachineStatus = components["schemas"]["MachineStatus"];
+export type StatusAlert = components["schemas"]["StatusAlert"];
 export type Data = Record<string, any>;
 
 let csrf = "";
@@ -127,6 +129,16 @@ export function useFarmSettings() {
     queryKey: ["farm-settings"],
     queryFn: ({ signal }) => unwrap(client.GET("/api/v1/settings/farm", { signal })),
     staleTime: 5 * 60 * 1000,
+  });
+}
+/** Controller-side verdict per machine: online, locally offline or offline at the pool. */
+export function useMachineStatus() {
+  return useQuery({
+    queryKey: ["machine-status"],
+    queryFn: ({ signal }) => unwrap(client.GET("/api/v1/status", { signal })),
+    staleTime: 10000,
+    gcTime: 30 * 60 * 1000,
+    refetchInterval: 10000,
   });
 }
 export function useRefresh() {

@@ -535,7 +535,8 @@ details > summary {
   font-style: normal;
   font-variant-numeric: tabular-nums;
 }
-.hive-stat-line em.stat-red {
+.hive-stat-line em.stat-red,
+.hive-stat-line strong.stat-red {
   color: var(--red);
 }
 .hive-stat > span {
@@ -918,6 +919,15 @@ details > summary {
   border-radius: var(--radius-xs);
   background: var(--accent-soft);
   color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+}
+.hive-pool-offline {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  background: var(--red-soft);
+  color: var(--red);
   font-size: 10px;
   font-weight: 600;
 }

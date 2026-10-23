@@ -107,6 +107,8 @@ pub fn router(state: ApiState, static_dir: &str) -> Router {
         .route("/machines/{id}/messages/dismiss", post(messages_dismiss))
         .route("/machines/{id}/instances/{instance}/log", get(miner_log))
         .route("/audit", get(audit))
+        .route("/status", get(machine_statuses))
+        .route("/alerts", get(status_alerts))
         .route(
             "/settings/farm",
             get(farm_settings).put(farm_settings_update),
@@ -553,6 +555,23 @@ async fn bmc(
 }
 async fn audit(State(s): State<ApiState>) -> ApiResult<Json<Vec<AuditEvent>>> {
     Ok(Json(s.app.audit_events().await?))
+}
+async fn machine_statuses(State(s): State<ApiState>) -> ApiResult<Json<Vec<MachineStatus>>> {
+    Ok(Json(s.app.machine_statuses().await?))
+}
+#[derive(Deserialize)]
+struct AlertsQuery {
+    /// Only alerts newer than this id, oldest first; omitted: the newest `limit`.
+    after: Option<i64>,
+    limit: Option<i64>,
+}
+async fn status_alerts(
+    State(s): State<ApiState>,
+    Query(q): Query<AlertsQuery>,
+) -> ApiResult<Json<Vec<StatusAlert>>> {
+    Ok(Json(
+        s.app.status_alerts(q.after, q.limit.unwrap_or(50)).await?,
+    ))
 }
 async fn farm_settings(State(s): State<ApiState>) -> ApiResult<Json<FarmSettings>> {
     Ok(Json(s.app.farm_settings().await?))

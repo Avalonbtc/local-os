@@ -60,6 +60,8 @@ pub fn document() -> Value {
     schema::<CoinIconList>(&mut schemas, "CoinIconList");
     schema::<CoinIconInput>(&mut schemas, "CoinIconInput");
     schema::<CoinCandidate>(&mut schemas, "CoinCandidate");
+    schema::<MachineStatus>(&mut schemas, "MachineStatus");
+    schema::<StatusAlert>(&mut schemas, "StatusAlert");
     schemas.insert("JobAccepted".into(),json!({"type":"object","required":["job_id"],"properties":{"job_id":{"type":"string","format":"uuid"}}}));
     schemas.insert(
         "Object".into(),
@@ -100,6 +102,8 @@ pub fn document() -> Value {
         ("/machines/{id}/messages", "MachineMessage", true),
         ("/machines/{id}/instances/{instance}/log", "MinerLog", false),
         ("/audit", "AuditEvent", true),
+        ("/status", "MachineStatus", true),
+        ("/alerts", "StatusAlert", true),
         ("/adapters", "AdapterDescription", true),
         ("/tokens", "TokenInfo", true),
     ] {
@@ -199,6 +203,10 @@ pub fn document() -> Value {
             params.push(
                 json!({"name":"unread","in":"query","schema":{"type":"boolean","default":false}}),
             );
+        }
+        if path.ends_with("/alerts") {
+            params.push(json!({"name":"after","in":"query","schema":{"type":"integer"}}));
+            params.push(json!({"name":"limit","in":"query","schema":{"type":"integer"}}));
         }
         if path.ends_with("/log") {
             params.push(json!({"name":"lines","in":"query","schema":{"type":"integer"}}));
