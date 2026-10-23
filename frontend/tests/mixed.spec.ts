@@ -35,9 +35,12 @@ test("fleet row shows CPU and GPU coins separately with GPU tiles", async ({ pag
   await expect(row.locator(".hive-miner-line")).toHaveCount(2);
   await expect(row).toContainText("XMR68.22 kH/s");
   await expect(row).toContainText("RVN120 MH/s");
-  await expect(row.locator("i.hive-gpu")).toHaveCount(2);
-  await expect(row.locator("i.hive-gpu.hot")).toHaveText("90");
-  await expect(row.locator(".hive-machine-power")).toContainText("880 W");
+  // HiveOS squares: the CPU (it is mining) plus one per GPU; readings are in the hover tooltip.
+  await expect(row.locator("i.hive-dev:not(.cpu)")).toHaveCount(2);
+  await expect(row.locator("i.hive-dev.cpu")).toHaveCount(1);
+  await row.locator("i.hive-dev.hot").hover();
+  await expect(page.locator(".hive-dev-tip")).toContainText("TEMP 90°");
+  await expect(row.locator(".hive-machine-power")).toContainText("880.00 W");
   const summary = page.getByRole("region", { name: "矿场统计" });
   await expect(summary).toContainText("XMR");
   await expect(summary).toContainText("RVN");

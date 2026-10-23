@@ -118,6 +118,7 @@ async fn fresh_snapshot_replaces_privileged_collection_and_delivers_events_and_p
         .unwrap();
     let app = App {
         bios: None,
+        icons: None,
         repository: store.clone(),
         vault,
         remote: Arc::new(SshExecutor::default()),

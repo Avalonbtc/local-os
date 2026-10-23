@@ -128,6 +128,7 @@ async fn pushed_snapshots_replace_ssh_reads_with_patches_events_and_policy() {
     });
     let app = App {
         bios: None,
+        icons: None,
         repository: store.clone(),
         vault: vault.clone(),
         remote: Arc::new(SshExecutor::default()),

@@ -207,6 +207,23 @@ export const IconUpload = (p: IconProps) => (
     <path d="M12 16V4M7 9l5-5 5 5M4 16v4h16v-4" />
   </Svg>
 );
+export const IconCommand = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M7 9l3 3-3 3M12 15h5" />
+  </Svg>
+);
+export const IconTag = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z" />
+    <circle cx="7.5" cy="7.5" r="1.5" />
+  </Svg>
+);
+export const IconRefresh = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" />
+  </Svg>
+);
 export const IconEmptyRigs = ({ size = 120 }: { size?: number }) => (
   <svg className="rd-illustration" width={size} height={(size * 3) / 4} viewBox="0 0 160 120" fill="none" aria-hidden>
     <rect x="18" y="30" width="124" height="30" rx="4" fill="#2b3239" stroke="#4a5560" />
@@ -218,17 +235,3 @@ export const IconEmptyRigs = ({ size = 120 }: { size?: number }) => (
     <path d="M80 104v10M72 110h16" stroke="#4a5560" strokeWidth="3" strokeLinecap="round" />
   </svg>
 );
-
-/** A coin badge coloured from the symbol (no third-party logos). */
-export function CoinBadge({ coin, size = 16 }: { coin: string; size?: number }) {
-  const symbol = coin.toUpperCase();
-  let hash = 0;
-  for (const ch of symbol) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-  const known: Record<string, string> = { XMR: "#f26822", ETH: "#8c8cf0", ETC: "#3ab83a", RVN: "#384182", BTC: "#f7931a", ZEPH: "#6aa8ff", KAS: "#49eacb" };
-  const color = known[symbol] ?? `hsl(${hash % 360} 55% 52%)`;
-  return (
-    <span className="rd-coin" style={{ width: size, height: size, background: color, fontSize: Math.round(size * 0.56) }} title={symbol}>
-      {symbol.slice(0, 1)}
-    </span>
-  );
-}

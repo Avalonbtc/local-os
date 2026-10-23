@@ -93,6 +93,7 @@ async fn all_selected_machines_start_without_slots_or_canary_but_same_machine_wa
     let runtime = Arc::new(HeldRuntime::default());
     let app = App {
         bios: None,
+        icons: None,
         repository: store.clone(),
         vault: vault.clone(),
         remote: Arc::new(SshExecutor::default()),

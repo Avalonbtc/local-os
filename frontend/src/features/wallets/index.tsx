@@ -2,7 +2,7 @@
 // there is no separate coin, pool or miner catalogue any more.
 import { useMemo, useState } from "react";
 import { App, AutoComplete, Button, Form, Input, Modal, Popconfirm, Space, Table, Tooltip } from "antd";
-import { DeleteOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
+import { DeleteOutlined, EditOutlined, PictureOutlined, PlusOutlined } from "@ant-design/icons";
 import {
   client,
   data,
@@ -13,6 +13,8 @@ import {
   type CatalogInput,
   type Data,
 } from "../../shared/api";
+import { CoinBadge, CoinLabel } from "../../shared/coins";
+import { CoinIconsDialog } from "./coin-icons";
 import { PageHeader, QueryState } from "../../shared/ui";
 
 /** Wallet id → coin symbol, resolved through the coin rows wallets reference. */
@@ -36,10 +38,19 @@ export function useWalletCoins() {
   };
 }
 
+/** Suggestions only; any text is accepted, like HiveOS's source field. */
+const SOURCES = ["Binance", "OKX", "Bybit", "Bitget", "Gate.io", "KuCoin", "MEXC", "HTX", "矿池账号", "官方钱包", "硬件钱包", "冷钱包"];
+
+/** The coin a flight sheet task already picked: shown, not editable (HiveOS greys it out). */
+function LockedCoin({ value }: { value?: string }) {
+  return <div className="wallet-locked-coin">{value ? <CoinLabel coin={value} /> : "—"}</div>;
+}
+
 export function WalletDialog({
   open,
   wallet,
   initialCoin,
+  lockCoin = false,
   coinOptions,
   onClose,
   onSaved,
@@ -47,6 +58,8 @@ export function WalletDialog({
   open: boolean;
   wallet?: CatalogItem;
   initialCoin?: string;
+  /** Opened from a flight sheet task whose coin is already chosen (HiveOS greys it out). */
+  lockCoin?: boolean;
   coinOptions: string[];
   onClose: () => void;
   onSaved?: (item: CatalogItem, coin: string) => void;
@@ -81,7 +94,7 @@ export function WalletDialog({
   };
   return (
     <Modal
-      title={wallet ? "编辑钱包" : "添加钱包"}
+      title={wallet ? "编辑钱包" : "新的钱包"}
       open={open}
       onCancel={onClose}
       onOk={() => form.submit()}
@@ -89,12 +102,14 @@ export function WalletDialog({
       className="hive-dialog"
       okText={wallet ? "保存" : "创建"}
       cancelText="取消"
+      cancelButtonProps={{ type: "text" }}
       destroyOnHidden
       width={620}
     >
       <Form
         form={form}
         layout="vertical"
+        requiredMark={false}
         onFinish={save}
         preserve={false}
         initialValues={{
@@ -105,24 +120,37 @@ export function WalletDialog({
           notes: data(wallet?.data).notes,
         }}
       >
-        <Form.Item name="coin_symbol" label="数字货币" rules={[{ required: true, message: "输入币种" }]} extra="任意币种符号，例如 XMR、ZEPH">
-          <AutoComplete
-            options={coinOptions.map((value) => ({ value }))}
-            filterOption={(input, option) => String(option?.value).toLowerCase().includes(input.toLowerCase())}
-            placeholder="XMR"
-          />
+        <Form.Item
+          name="coin_symbol"
+          label="数字货币"
+          className={lockCoin ? "locked" : undefined}
+          rules={[{ required: true, message: "输入币种" }]}
+        >
+          {lockCoin ? (
+            <LockedCoin />
+          ) : (
+            <AutoComplete
+              options={coinOptions.map((value) => ({ value, label: <CoinLabel coin={value} /> }))}
+              filterOption={(input, option) => String(option?.value).toLowerCase().includes(input.toLowerCase())}
+              placeholder="输入币种，例如 XMR"
+            />
+          )}
         </Form.Item>
         <Form.Item name="address" label="地址" rules={[{ required: true, message: "输入收款地址或矿池账号" }]}>
-          <Input.TextArea rows={3} />
+          <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} placeholder="输入钱包地址" />
         </Form.Item>
         <Form.Item name="name" label="名称" rules={[{ required: true, message: "输入钱包名称" }]}>
-          <Input placeholder="例如：交易所 XMR" />
+          <Input placeholder="输入钱包名称" />
         </Form.Item>
         <Form.Item name="source" label="来源">
-          <Input placeholder="交易所、钱包类型或矿池账号" />
+          <AutoComplete
+            options={SOURCES.map((value) => ({ value }))}
+            filterOption={(input, option) => String(option?.value).toLowerCase().includes(input.toLowerCase())}
+            placeholder="选择交易所，钱包类型或添加描述"
+          />
         </Form.Item>
         <Form.Item name="notes" label="备注">
-          <Input />
+          <Input placeholder="可选" />
         </Form.Item>
       </Form>
     </Modal>
@@ -134,6 +162,7 @@ export function WalletsPage() {
   const refresh = useRefresh();
   const { message } = App.useApp();
   const [editing, setEditing] = useState<CatalogItem | "new">();
+  const [iconsOpen, setIconsOpen] = useState(false);
   const [coinFilter, setCoinFilter] = useState<string>();
   const [search, setSearch] = useState("");
   const rows = (wallets.data ?? []).filter(
@@ -147,9 +176,14 @@ export function WalletsPage() {
         title="钱包"
         description="收款地址或矿池账号；飞行表按币种选择钱包"
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing("new")}>
-            添加钱包
-          </Button>
+          <Space>
+            <Button icon={<PictureOutlined />} onClick={() => setIconsOpen(true)}>
+              币种图标
+            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing("new")}>
+              添加钱包
+            </Button>
+          </Space>
         }
       />
       <div className="catalog-filters">
@@ -158,7 +192,7 @@ export function WalletsPage() {
         </Button>
         {symbols.map((c) => (
           <Button key={c} type={coinFilter === c ? "primary" : "text"} onClick={() => setCoinFilter(c)}>
-            {c}
+            <CoinLabel coin={c} />
           </Button>
         ))}
         <Input.Search aria-label="搜索钱包" placeholder="搜索名称、币种或地址" allowClear value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -172,12 +206,21 @@ export function WalletsPage() {
           pagination={{ pageSize: 20, hideOnSinglePage: true }}
           columns={[
             {
-              title: "钱包",
+              title: "数字货币",
+              key: "coin",
+              width: 130,
+              render: (_, r) => (
+                <strong className="coin-label">
+                  <CoinBadge coin={symbol(r.id)} /> {symbol(r.id)}
+                </strong>
+              ),
+            },
+            {
+              title: "名称 / 来源",
               key: "name",
-              width: "34%",
+              width: "30%",
               render: (_, r) => (
                 <div className="wallet-cell">
-                  <strong className="coin-label">{symbol(r.id)}</strong>
                   <b>{r.name}</b>
                   <div className="muted">{data(r.data).source || "—"}</div>
                   <div className="wallet-address mono">{data(r.data).address}</div>
@@ -227,6 +270,7 @@ export function WalletsPage() {
         coinOptions={symbols}
         onClose={() => setEditing(undefined)}
       />
+      <CoinIconsDialog open={iconsOpen} symbols={symbols} onClose={() => setIconsOpen(false)} />
     </>
   );
 }

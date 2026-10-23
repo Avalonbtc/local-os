@@ -83,6 +83,13 @@ async fn main() -> anyhow::Result<()> {
         }
         None => None,
     };
+    let icon_dir = std::env::var("RIGDECK_COIN_ICON_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| root.join("coin-icons"));
+    // Created up front so files can be dropped in right away.
+    if let Err(error) = std::fs::create_dir_all(&icon_dir) {
+        tracing::warn!(%error, dir = %icon_dir.display(), "coin icon directory not created");
+    }
     let app = App {
         push: Arc::new(rig_application::push::PushHub::new(push)),
         bios: Some(Arc::new(rig_infrastructure::bios::SumBios {
@@ -97,6 +104,19 @@ async fn main() -> anyhow::Result<()> {
         runtime,
         adapters: Arc::new(adapters::registry()),
         bmc: Arc::new(bmc::registry()),
+        // Drop SYMBOL.svg|png|webp|jpg files into the icon directory; CoinGecko search runs on the
+        // controller only ("off" disables it, e.g. on farms without internet access).
+        icons: Some(Arc::new(rig_infrastructure::icons::IconStore::new(
+            icon_dir,
+            match std::env::var("RIGDECK_COINGECKO_URL").as_deref() {
+                Ok("off") => None,
+                Ok(url) if !url.is_empty() => Some(url.to_string()),
+                _ => Some("https://api.coingecko.com".into()),
+            },
+            std::env::var("RIGDECK_COINGECKO_KEY")
+                .ok()
+                .filter(|k| !k.is_empty()),
+        )?)),
         pools: Some(Arc::new(rig_infrastructure::pools::PublicPools::default())),
     };
     let bind = std::env::var("RIGDECK_BIND").unwrap_or_else(|_| "127.0.0.1:8080".into());

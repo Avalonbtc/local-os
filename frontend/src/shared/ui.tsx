@@ -107,10 +107,13 @@ export function Chart({
   points,
   label,
   unit = "%",
+  range,
 }: {
   points: [string, number | null][];
   label: string;
   unit?: string;
+  /** Fixed x-axis window (epoch ms); otherwise it fits the data. */
+  range?: [number, number];
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -128,6 +131,8 @@ export function Chart({
       tooltip: { trigger: "axis" },
       xAxis: {
         type: "time",
+        min: range?.[0],
+        max: range?.[1],
         axisLine: { lineStyle: { color: "#424650" } },
         splitLine: { show: false },
       },
@@ -156,7 +161,7 @@ export function Chart({
       observer?.disconnect();
       chart?.dispose();
     };
-  }, [points, label, unit]);
+  }, [points, label, unit, range?.[0], range?.[1]]);
   return (
     <figure className="metric-chart">
       <figcaption>{label}</figcaption>

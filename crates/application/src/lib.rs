@@ -1,6 +1,7 @@
 pub mod audit;
 pub mod bmc;
 pub mod catalog;
+pub mod coin_icons;
 pub mod fleet;
 pub mod flights;
 pub mod identity;
@@ -24,6 +25,8 @@ pub struct App {
     pub bmc: Arc<HashMap<String, Arc<dyn BmcProvider>>>,
     /// Rig-initiated telemetry; `Default` disables it.
     pub push: Arc<push::PushHub>,
+    /// Coin icon directory, links and CoinGecko; `None` leaves only console-added icons.
+    pub icons: Option<Arc<dyn IconSource>>,
     /// Pool miner APIs for pool-side offline detection; `None` checks local status only.
     pub pools: Option<Arc<dyn PoolStats>>,
 }

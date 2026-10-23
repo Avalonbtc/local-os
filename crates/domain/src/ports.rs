@@ -112,7 +112,14 @@ pub trait TelemetryRepository: Send + Sync {
     async fn latest_summary(&self, machine: Option<Uuid>) -> Result<Vec<Observation>> {
         self.latest(machine).await
     }
-    async fn history(&self, machine: Uuid, kind: &str, hours: u32) -> Result<Vec<Observation>>;
+    /// The `hours` before `until` (now when absent).
+    async fn history(
+        &self,
+        machine: Uuid,
+        kind: &str,
+        hours: u32,
+        until: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<Vec<Observation>>;
     async fn maintain(&self) -> Result<()>;
     /// Write many observations in one round trip (the monitor batches across machines).
     async fn observe_many(&self, observations: &[Observation]) -> Result<()> {
@@ -148,6 +155,27 @@ pub trait SettingsRepository: Send + Sync {
     async fn farm_settings(&self) -> Result<Option<Value>>;
     async fn save_farm_settings(&self, settings: &Value, actor: &Actor) -> Result<()>;
 }
+/// Coin icons added on the controller (uploads, links, CoinGecko picks).
+#[async_trait]
+pub trait CoinIconRepository: Send + Sync {
+    async fn coin_icons(&self) -> Result<Vec<CoinIcon>>;
+    async fn coin_icon(&self, symbol: &str) -> Result<Option<(CoinIcon, Vec<u8>)>>;
+    async fn save_coin_icon(&self, icon: &CoinIcon, bytes: &[u8], actor: &Actor) -> Result<()>;
+    async fn delete_coin_icon(&self, symbol: &str, actor: &Actor) -> Result<()>;
+}
+/// Where icons come from outside the database: the controller's icon directory, links and CoinGecko.
+#[async_trait]
+pub trait IconSource: Send + Sync {
+    /// The directory scanned for `SYMBOL.svg|png|webp|jpg` files.
+    fn directory(&self) -> Option<String>;
+    fn search_enabled(&self) -> bool;
+    async fn directory_icons(&self) -> Result<Vec<CoinIcon>>;
+    async fn directory_icon(&self, symbol: &str) -> Result<Option<(CoinIcon, Vec<u8>)>>;
+    /// Download one image (bounded size and time).
+    async fn download(&self, url: &str) -> Result<IconImage>;
+    async fn search(&self, query: &str) -> Result<Vec<CoinCandidate>>;
+    async fn coingecko_image(&self, id: &str) -> Result<IconImage>;
+}
 #[async_trait]
 pub trait StatusRepository: Send + Sync {
     async fn machine_statuses(&self) -> Result<Vec<MachineStatus>>;
@@ -168,6 +196,7 @@ pub trait Repository:
     + TelemetryRepository
     + AuditRepository
     + SettingsRepository
+    + CoinIconRepository
     + StatusRepository
 {
 }
@@ -180,6 +209,7 @@ impl<T> Repository for T where
         + TelemetryRepository
         + AuditRepository
         + SettingsRepository
+        + CoinIconRepository
         + StatusRepository
 {
 }

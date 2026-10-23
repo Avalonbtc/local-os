@@ -496,6 +496,301 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/coin-icons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Success */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CoinIconList"];
+                    };
+                };
+                /** @description Validation error */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Authentication required */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden or invalid CSRF */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Dependency unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/coin-icons/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query: {
+                    q: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Success */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CoinCandidate"][];
+                    };
+                };
+                /** @description Validation error */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Authentication required */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden or invalid CSRF */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Dependency unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/coin-icons/{symbol}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                symbol: string;
+            };
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    symbol: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The icon image */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "image/*": string;
+                    };
+                };
+                /** @description No icon for this symbol */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    symbol: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CoinIconInput"];
+                };
+            };
+            responses: {
+                /** @description Success */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CoinIcon"];
+                    };
+                };
+                /** @description Validation error */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Authentication required */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden or invalid CSRF */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Dependency unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    symbol: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/flight-sheets": {
         parameters: {
             query?: never;
@@ -1780,6 +2075,7 @@ export interface paths {
                 summary?: boolean;
                 kind: string;
                 hours?: number;
+                until?: string;
             };
             header?: never;
             path: {
@@ -1793,6 +2089,7 @@ export interface paths {
                     summary?: boolean;
                     kind: string;
                     hours?: number;
+                    until?: string;
                 };
                 header?: never;
                 path: {
@@ -3209,6 +3506,59 @@ export interface components {
             revision: number;
         };
         CatalogKind: ("coin" | "wallet" | "pool" | "miner") | "oc_profile";
+        /**
+         * CoinCandidate
+         * @description A CoinGecko search hit; `thumb` is a data URL the controller fetched, so browsers never
+         *     contact CoinGecko themselves.
+         */
+        CoinCandidate: {
+            id: string;
+            /** Format: uint32 */
+            market_cap_rank?: number | null;
+            name: string;
+            symbol: string;
+            thumb?: string | null;
+        };
+        /**
+         * @description One icon in the controller's coin icon library. Browsers only ever load icons from the
+         *     controller; the image itself is served by `/api/v1/coin-icons/{symbol}`.
+         */
+        CoinIcon: {
+            content_type: string;
+            /** @description `upload`, `url`, `coingecko` (stored in the database) or `directory` (a file on the controller). */
+            source: string;
+            /** @description The link or CoinGecko id it came from; the file name for directory icons. */
+            source_ref?: string | null;
+            symbol: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /**
+         * CoinIconInput
+         * @description How to add an icon: an uploaded file, a link the controller downloads once, or a CoinGecko coin.
+         */
+        CoinIconInput: {
+            content_type: string;
+            data_base64: string;
+            /** @constant */
+            from: "upload";
+        } | {
+            /** @constant */
+            from: "url";
+            url: string;
+        } | {
+            /** @constant */
+            from: "coingecko";
+            id: string;
+        };
+        /** CoinIconList */
+        CoinIconList: {
+            /** @description Where the controller reads dropped-in icon files from (`KAS.svg`, `TSC.png`, ...). */
+            directory?: string | null;
+            icons: components["schemas"]["CoinIcon"][];
+            /** @description Whether CoinGecko search is configured on this controller. */
+            search: boolean;
+        };
         Credential: {
             /** @constant */
             kind: "password";

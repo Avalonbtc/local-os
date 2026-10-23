@@ -1,8 +1,8 @@
+import type React from "react";
 import { useEffect, useState } from "react";
 import {
   Alert,
   Button,
-  Dropdown,
   Empty,
   Input,
   Modal,
@@ -14,20 +14,16 @@ import {
   AppstoreOutlined,
   ArrowsAltOutlined,
   BarsOutlined,
-  CodeOutlined,
   DownloadOutlined,
-  DownOutlined,
   FireFilled,
   InfoCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
-  RocketOutlined,
-  SettingOutlined,
   SortAscendingOutlined,
   StarFilled,
   StarOutlined,
-  ThunderboltFilled,
   UnorderedListOutlined,
+  RocketFilled,
 } from "@ant-design/icons";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -37,6 +33,7 @@ import {
   machinePower,
   MINER_FRESH_SECONDS,
   minerStatsFresh,
+  serverNow,
   useMachines,
   useRefresh,
   useFarmSettings,
@@ -48,18 +45,23 @@ import {
 } from "../../shared/api";
 import { hashrate, number, QueryState } from "../../shared/ui";
 import { BatchModal, MachineEditor } from "./controls";
+import { BulkActions } from "./bulk";
+import { setSelection, useSelection } from "../../shared/selection";
 import { BatchAddModal } from "./import";
-import { CoinBadge, IconBolt, IconCpu, IconEmptyRigs, IconGpu, IconPickaxe, IconRig, IconServer, IconYuan } from "../../shared/icons";
+import { IconBolt, IconCpu, IconEmptyRigs, IconGpu, IconPickaxe, IconRig, IconServer, IconYuan } from "../../shared/icons";
+import { CoinBadge } from "../../shared/coins";
 
-type Filter = "all" | "online" | "offline" | "pool" | "problems" | "favorites";
+type Filter = "all" | "online" | "offline" | "pool" | "problems" | "favorites" | "selected";
 type View = "dense" | "comfortable" | "grid";
 type Sort = "name" | "uptime" | "hashrate" | "load";
 
 type GpuReading = {
   id: string;
+  vendor?: string;
   bus?: number | null;
   model?: string;
   temperature_c?: number | null;
+  memory_temperature_c?: number | null;
   fan_pct?: number | null;
   power_w?: number | null;
   util_pct?: number | null;
@@ -85,6 +87,8 @@ type FleetRow = {
   powerSource: string;
   bmcOnline: boolean;
   powerState?: string;
+  /** When the rig last reported (system observation time), for offline rows. */
+  lastSeen?: string;
   instances: Record<string, any>[];
   hashrateHs: number;
 };
@@ -154,11 +158,12 @@ function model(
         : undefined,
     load:
       typeof systemData.load?.[0] === "number" ? systemData.load[0] : undefined,
-    powerW: machinePower(system).watts,
-    powerLabel: machinePower(system).label,
-    powerSource: machinePower(system).source,
+    powerW: machinePower(system, machine.policy).watts,
+    powerLabel: machinePower(system, machine.policy).label,
+    powerSource: machinePower(system, machine.policy).source,
     bmcOnline: isFresh(power, 90),
     powerState: isFresh(power, 90) ? data(power?.data).state : undefined,
+    lastSeen: system?.observed_at,
     instances,
     hashrateHs: active.reduce(
       (sum, instance) =>
@@ -169,6 +174,26 @@ function model(
       0,
     ),
   };
+}
+
+/** HiveOS shortens long worker names in the middle: "docker-3070ti-monitor" → "docker-..monitor". */
+function shortName(name: string) {
+  return name.length > 17 ? `${name.slice(0, 7)}..${name.slice(-7)}` : name;
+}
+
+/** HiveOS marks which devices a rig has: N (NVIDIA), A (AMD), I (Intel); C for a CPU-only rig. */
+function VendorMarks({ row }: { row: FleetRow }) {
+  const vendors = [...new Set(row.gpus.map((g) => g.vendor).filter(Boolean))] as string[];
+  if (!vendors.length) return <span className="hive-mark cpu">C</span>;
+  return (
+    <>
+      {vendors.map((v) => (
+        <span key={v} className={`hive-mark ${v.toLowerCase()}`}>
+          {v.slice(0, 1)}
+        </span>
+      ))}
+    </>
+  );
 }
 
 function uptimeLabel(seconds?: number) {
@@ -263,7 +288,11 @@ export function FleetSummary() {
   return (
     <section className="hive-farm-summary" aria-label="矿场统计">
       <div className="hive-farm-summary-inner">
-        <div className="hive-stat hive-stat-green">
+        {/* HiveOS: a thin bar on top, green for the online share and orange for the rest. */}
+        <div
+          className="hive-stat hive-stat-green hive-stat-ratio"
+          style={{ "--online": `${rows.length ? (online / rows.length) * 100 : 0}%` } as React.CSSProperties}
+        >
           <div className="hive-stat-line">
             <strong>{machines.data?.length ?? "—"}</strong>
             <em>{machines.data ? rows.length - online : "—"}</em>
@@ -318,29 +347,53 @@ export function FleetSummary() {
             <IconBolt size={13} />功耗 <small>{powerReadings.length}/{rows.length} 台</small>
           </span>
         </div>
-        {(rateCards.length ? rateCards : [undefined]).map((card) => {
-          const parts = card ? rateParts(card.hs) : undefined;
-          return (
-            <div className="hive-stat hive-stat-rate" key={card ? `${card.coin}|${card.algorithm}` : "none"}>
-              <div className="hive-stat-line">
-                <strong>{parts?.value ?? "—"}</strong>
-                {parts && <small>{parts.unit}</small>}
+        {/* One hashrate card for every coin (HiveOS keeps the summary to a single row): one coin
+            shows big, two share the card, more show the first and "+N"; the tooltip lists all. */}
+        <Tooltip
+          title={
+            rateCards.length > 1 && (
+              <div className="hive-issue-list">
+                {rateCards.map((card) => (
+                  <div key={`${card.coin}|${card.algorithm}`}>
+                    {card.coin} {hashrate(card.hs)} · {card.algorithm} · {card.rigs.size} 台
+                  </div>
+                ))}
               </div>
-              <span>
-                {card ? (
-                  <>
-                    <CoinBadge coin={card.coin} size={13} />
-                    <b className="hive-stat-coin">{card.coin}</b> {card.algorithm} <small>{card.rigs.size} 台</small>
-                  </>
-                ) : (
-                  <>
-                    <IconPickaxe size={13} />算力
-                  </>
-                )}
-              </span>
-            </div>
-          );
-        })}
+            )
+          }
+        >
+          <div className={`hive-stat hive-stat-rate ${rateCards.length > 1 ? "hive-stat-rates" : ""}`}>
+            {rateCards.length <= 1 ? (
+              <div className="hive-stat-line">
+                <strong>{rateCards[0] ? rateParts(rateCards[0].hs).value : "—"}</strong>
+                {rateCards[0] && <small>{rateParts(rateCards[0].hs).unit}</small>}
+              </div>
+            ) : (
+              (rateCards.length > 2 ? rateCards.slice(0, 1) : rateCards).map((card) => (
+                <div className="hive-rate-line" key={`${card.coin}|${card.algorithm}`}>
+                  <CoinBadge coin={card.coin} size={13} />
+                  <b>{card.coin}</b>
+                  <strong>{rateParts(card.hs).value}</strong>
+                  <small>{rateParts(card.hs).unit}</small>
+                </div>
+              ))
+            )}
+            {rateCards.length > 2 && <div className="hive-rate-line more">+{rateCards.length - 1} 种币</div>}
+            <span>
+              {rateCards.length === 1 ? (
+                <>
+                  <CoinBadge coin={rateCards[0].coin} size={13} />
+                  <b className="hive-stat-coin">{rateCards[0].coin}</b> {rateCards[0].algorithm}
+                </>
+              ) : (
+                <>
+                  <IconPickaxe size={13} />算力
+                </>
+              )}
+              <small>{new Set(rateCards.flatMap((card) => [...card.rigs])).size} 台</small>
+            </span>
+          </div>
+        </Tooltip>
         <div className="hive-stat">
           <div className="hive-stat-line">
             <strong>{rows.filter((row) => row.bmcOnline).length}</strong>
@@ -368,20 +421,14 @@ export function FleetSummary() {
   );
 }
 
-function temperatureClass(value?: number) {
-  if (value === undefined) return "";
-  return value >= 85 ? "hot" : value >= 75 ? "warm" : "ok";
-}
-
 function tempLevel(value: number | null | undefined, limit: number) {
   if (typeof value !== "number") return "none";
   return value > limit ? "hot" : value > limit - 10 ? "warm" : "ok";
 }
 
-/** HiveOS device column: the CPU bar, then one tile per GPU coloured by temperature. */
+/** HiveOS device column: one small square per GPU (or one for the CPU), hover for the readings. */
 function DevicesCell({ row }: { row: FleetRow }) {
   if (!row.online) return <div className="hive-capacity" />;
-  const pct = row.cpuPct;
   // Per-GPU hashrate, matched by PCI bus number (or by position when a miner gives none).
   const gpuRates = new Map<string, string[]>();
   for (const instance of row.instances) {
@@ -390,50 +437,58 @@ function DevicesCell({ row }: { row: FleetRow }) {
       const gpu =
         typeof item.bus === "number" ? row.gpus.find((g) => g.bus === item.bus) : row.gpus[index];
       if (!gpu || typeof item.hs !== "number") return;
-      gpuRates.set(gpu.id, [...(gpuRates.get(gpu.id) ?? []), `${coinOf(instance)} ${hashrate(item.hs)}`]);
+      gpuRates.set(gpu.id, [...(gpuRates.get(gpu.id) ?? []), hashrate(item.hs)]);
     });
   }
-  return (
-    <div className="hive-capacity hive-devices">
-      <Tooltip
-        title={`CPU ${pct === undefined ? "使用率未采集" : `使用率 ${number(pct, 0)}%`}${row.cpuTemperature !== undefined ? ` · ${number(row.cpuTemperature, 0)}°C` : ""}${row.logicalCpus ? ` · ${row.logicalCpus} 线程` : ""}`}
-      >
-        <span className={`hive-cpu-cell ${row.gpus.length ? "compact" : ""}`}>
-          <span className="hive-cpu-bar">
-            <i style={{ width: `${Math.max(0, Math.min(100, pct ?? 0))}%` }} />
+  const cpuRate = row.instances
+    .filter((i) => running(i) && !String(i.stats?.device ?? "cpu").startsWith("gpu") && typeof i.stats?.hashrate_hs === "number")
+    .map((i) => hashrate(i.stats.hashrate_hs));
+  const tip = (parts: [string, string | undefined][]) => (
+    <span className="hive-dev-tip-body">
+      {parts
+        .filter(([, v]) => v !== undefined)
+        .map(([label, value]) => (
+          <span key={label}>
+            {label} {value}
           </span>
-          <span className="hive-cpu-pct">{pct === undefined ? "—" : `${number(pct, 0)}%`}</span>
-          {row.cpuTemperature !== undefined && (
-            <span className={`hive-temp ${temperatureClass(row.cpuTemperature)}`}>
-              {number(row.cpuTemperature, 0)}°
-            </span>
-          )}
-          {!row.gpus.length && row.logicalCpus !== undefined && <small>{row.logicalCpus}T</small>}
-        </span>
-      </Tooltip>
-      {row.gpus.length > 0 && (
-        <span className="hive-gpu-tiles" aria-label={`${row.gpus.length} 块 GPU`}>
-          {row.gpus.map((gpu, index) => {
-            const level = tempLevel(gpu.temperature_c, row.gpuTempLimit);
-            const lines = [
-              `GPU ${index} · ${gpu.model ?? gpu.id}`,
-              ...(gpuRates.get(gpu.id) ?? []),
-              typeof gpu.temperature_c === "number" ? `温度 ${number(gpu.temperature_c, 0)}°C` : "温度未采集",
-              typeof gpu.fan_pct === "number" ? `风扇 ${number(gpu.fan_pct, 0)}%` : undefined,
-              typeof gpu.power_w === "number" ? `功耗 ${number(gpu.power_w, 0)} W` : undefined,
-              typeof gpu.util_pct === "number" ? `负载 ${number(gpu.util_pct, 0)}%` : undefined,
-              level === "hot" ? `超过高温阈值 ${row.gpuTempLimit}°C` : undefined,
-            ].filter(Boolean);
-            return (
-              <Tooltip key={gpu.id} title={<div className="hive-issue-list">{lines.map((l) => <div key={l}>{l}</div>)}</div>}>
-                <i className={`hive-gpu ${level}`}>
-                  {typeof gpu.temperature_c === "number" ? number(gpu.temperature_c, 0) : "—"}
-                </i>
-              </Tooltip>
-            );
-          })}
-        </span>
+        ))}
+    </span>
+  );
+  const showCpu = row.gpus.length === 0 || cpuRate.length > 0;
+  return (
+    <div className="hive-capacity hive-devices" aria-label={`${row.gpus.length} 块 GPU`}>
+      {showCpu && (
+        <Tooltip
+          placement="topLeft"
+          arrow={false}
+          rootClassName="hive-dev-tip"
+          title={tip([
+            ["CPU", undefined],
+            ["TEMP", row.cpuTemperature !== undefined ? `${number(row.cpuTemperature, 0)}°` : "—"],
+            ["LOAD", row.cpuPct !== undefined ? `${number(row.cpuPct, 0)}%` : "—"],
+            ["", cpuRate.join(" + ") || undefined],
+          ])}
+        >
+          <i className={`hive-dev cpu ${tempLevel(row.cpuTemperature, 85)}`} aria-label="CPU" />
+        </Tooltip>
       )}
+      {row.gpus.map((gpu, index) => (
+        <Tooltip
+          key={gpu.id}
+          placement="topLeft"
+          arrow={false}
+          rootClassName="hive-dev-tip"
+          title={tip([
+            [`GPU ${index}`, ""],
+            ["TEMP", typeof gpu.temperature_c === "number" ? `${number(gpu.temperature_c, 0)}°` : "—"],
+            ["FAN", typeof gpu.fan_pct === "number" ? `${number(gpu.fan_pct, 0)}%` : undefined],
+            ["MEM", typeof gpu.memory_temperature_c === "number" ? `${number(gpu.memory_temperature_c, 0)}°` : undefined],
+            ["", gpuRates.get(gpu.id)?.join(" + ")],
+          ])}
+        >
+          <i className={`hive-dev ${tempLevel(gpu.temperature_c, row.gpuTempLimit)}`} aria-label={`GPU ${index}`} />
+        </Tooltip>
+      ))}
     </div>
   );
 }
@@ -442,10 +497,20 @@ function DevicesCell({ row }: { row: FleetRow }) {
 function MiningCell({ row }: { row: FleetRow }) {
   const shown = row.instances.filter((item) => item.desired === "running");
   const instances = shown.length ? shown : row.instances.slice(0, 1);
+  if (!row.online)
+    return (
+      <div className="hive-mining-cell">
+        <span className="hive-offline-note">
+          {row.lastSeen
+            ? `掉线 · 最后在线 ${new Date(row.lastSeen).toLocaleString("zh-CN", { hour12: false, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}`
+            : "掉线 · 从未上报"}
+        </span>
+      </div>
+    );
   if (!instances.length)
     return (
       <div className="hive-mining-cell">
-        <span className="hive-row-muted">{row.online ? "未运行矿工" : "—"}</span>
+        <span className="hive-row-muted">无飞行表</span>
       </div>
     );
   return (
@@ -502,7 +567,10 @@ export function FleetPage() {
   const [search, setSearch] = useState("");
   const [group, setGroup] = useState<string>();
   const [showFilters, setShowFilters] = useState(false);
-  const [selected, setSelected] = useState<string[]>([]);
+  // Shared with the top bar, which turns into the HiveOS bulk bar while workers are ticked.
+  const selected = useSelection();
+  const setSelected = setSelection;
+  useEffect(() => () => setSelection([]), []);
   const [favorites, setFavorites] = useState<string[]>(() => {
     try {
       return JSON.parse(
@@ -552,6 +620,7 @@ export function FleetPage() {
       if (filter === "pool") return row.poolOffline;
       if (filter === "problems") return row.issue;
       if (filter === "favorites") return favorites.includes(machine.id);
+      if (filter === "selected") return selected.includes(machine.id);
       return true;
     })
     .sort((a, b) => {
@@ -667,6 +736,7 @@ export function FleetPage() {
                 ["pool", "矿池离线", rows.filter((row) => row.poolOffline).length],
                 ["problems", "有问题", rows.filter((row) => row.issue).length],
                 ["favorites", "收藏", favorites.length],
+                ...(selected.length ? [["selected", "已选择", selected.length]] : []),
               ] as [Filter, string, number][]
             ).map(([value, label, count]) => (
               <button
@@ -817,55 +887,7 @@ export function FleetPage() {
           of {filtered.length}
         </span>
       </div>
-      {selected.length > 0 && (
-        <div className="hive-batch-bar">
-          <strong>已选 {selected.length} 台</strong>
-          <Button
-            size="small"
-            icon={<RocketOutlined />}
-            onClick={() => setBatch("apply")}
-          >
-            应用飞行表
-          </Button>
-          <Button
-            size="small"
-            icon={<CodeOutlined />}
-            onClick={() => setBatch("command")}
-          >
-            执行命令
-          </Button>
-          <Button size="small" onClick={() => setBatch("miner")}>
-            矿工控制
-          </Button>
-          <Link to={`/terminals?ids=${selected.join(",")}`}>
-            <Button size="small">多机终端</Button>
-          </Link>
-          <Dropdown
-            menu={{
-              items: [
-                {
-                  key: "bootstrap",
-                  label: "部署 / 更新运行层",
-                  icon: <SettingOutlined />,
-                },
-                {
-                  key: "power",
-                  label: "BMC 电源操作",
-                  icon: <ThunderboltFilled />,
-                },
-              ],
-              onClick: ({ key }) => setBatch(key),
-            }}
-          >
-            <Button size="small">
-              更多 <DownOutlined />
-            </Button>
-          </Dropdown>
-          <Button size="small" type="text" onClick={() => setSelected([])}>
-            取消选择
-          </Button>
-        </div>
-      )}
+      {selected.length > 0 && <BulkActions ids={selected} onBatch={setBatch} />}
       {telemetry.error && (
         <Alert
           type="warning"
@@ -940,15 +962,12 @@ export function FleetPage() {
                       <StarOutlined />
                     )}
                   </button>
-                  <Link to={`/machines/${row.machine.id}`}>
-                    {row.machine.name}
+                  <Link to={`/machines/${row.machine.id}`} title={`${row.machine.name} · ${row.address ?? row.machine.host}`}>
+                    {shortName(row.machine.name)}
                   </Link>
                   {row.machine.is_controller && (
                     <small className="hive-controller-mark">主控</small>
                   )}
-                  <small className="hive-machine-ip">
-                    {row.address ?? row.machine.host}
-                  </small>
                   {row.poolOffline && (
                     <Tooltip title={row.poolNote || "矿池看不到这台矿机的算力"}>
                       <small className="hive-pool-offline">矿池离线</small>
@@ -956,6 +975,11 @@ export function FleetPage() {
                   )}
                 </div>
                 <div className="hive-machine-alert">
+                  {row.online && !row.instances.length && (
+                    <Tooltip title="无飞行表">
+                      <RocketFilled className="hive-no-fs" />
+                    </Tooltip>
+                  )}
                   {row.issue && (
                     <Tooltip
                       title={
@@ -970,34 +994,46 @@ export function FleetPage() {
                     </Tooltip>
                   )}
                 </div>
-                <div className="hive-machine-uptime" title="矿工运行时间；多个矿工取最近启动的实例">
-                  {uptimeLabel(row.uptime)}
-                </div>
-                <div
-                  className={`hive-machine-status ${row.online ? "online" : ""}`}
-                  title={row.online ? "CPU 节点在线" : "SSH 指标离线"}
-                >
-                  {row.online ? (
-                    <>
-                      <IconCpu size={13} />
-                      {row.gpus.length > 0 && <IconGpu size={13} />}
-                    </>
-                  ) : (
-                    "—"
-                  )}
+                {row.online ? (
+                  <div className="hive-machine-uptime" title="矿工运行时间；多个矿工取最近启动的实例">
+                    {uptimeLabel(row.uptime)}
+                  </div>
+                ) : (
+                  <div className="hive-machine-uptime offline" title="距最后一次上报">
+                    {row.lastSeen ? uptimeLabel((serverNow() - Date.parse(row.lastSeen)) / 1000) : "—"}
+                  </div>
+                )}
+                <div className="hive-machine-status" title={row.online ? "在线设备" : "离线"}>
+                  {row.online ? <VendorMarks row={row} /> : "—"}
                 </div>
                 <MiningCell row={row} />
                 <DevicesCell row={row} />
                 <div className="hive-machine-load">
-                  {row.load === undefined
-                    ? "LA —"
-                    : `LA ${number(row.load, 2)}`}
+                  {row.online && (
+                    <>
+                      <b>LA</b> {row.load === undefined ? "—" : number(row.load, 2)}
+                    </>
+                  )}
+                </div>
+                <div className="hive-machine-fan">
+                  {row.gpus.some((g) => typeof g.fan_pct === "number") ? (
+                    <>
+                      <b>FAN</b> {number(Math.max(...row.gpus.map((g) => g.fan_pct ?? 0)), 0)}%
+                    </>
+                  ) : row.gpus.length === 0 && row.cpuPct !== undefined ? (
+                    <>
+                      <b>CPU</b> {number(row.cpuPct, 0)}%
+                    </>
+                  ) : null}
                 </div>
                 <div className="hive-machine-power" title={`${row.powerLabel} · ${row.powerSource}`}>
-                  <IconBolt size={12} />{" "}
-                  {row.powerW === undefined
-                    ? "—"
-                    : `${number(row.powerW, 0)} W`}
+                  {row.online && (
+                    <>
+                      <IconBolt size={12} />{" "}
+                      {row.powerW === undefined ? "—" : row.powerW.toFixed(2)}
+                      {row.powerW !== undefined && <small> W</small>}
+                    </>
+                  )}
                   {row.powerState === "Off" && <span className="hive-power-state">已关机</span>}
                 </div>
               </div>

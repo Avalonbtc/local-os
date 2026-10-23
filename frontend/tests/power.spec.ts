@@ -11,7 +11,7 @@ test('software CPU power is used even when BMC has a different reading', async (
  await route.fulfill({json:body});
  });
  await page.goto('/machines');
- await expect(page.locator('.hive-machine-power')).toContainText('307 W');
+ await expect(page.locator('.hive-machine-power')).toContainText('307.40 W');
  await expect(page.locator('.hive-machine-power')).not.toContainText('已开机');
  await expect(page.locator('.hive-machine-power')).not.toContainText('600');
  await expect(page.getByRole('region', {name:'矿场统计'})).toContainText('¥4.13');

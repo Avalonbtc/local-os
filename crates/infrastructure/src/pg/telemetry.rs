@@ -393,19 +393,28 @@ impl TelemetryRepository for PgStore {
         sqlx::query_scalar::<_, Value>("SELECT jsonb_build_object('machine_id',o.machine_id,'kind',o.kind,'observed_at',o.observed_at,'error',o.error,'data',metric_values(o.kind,o.data)) FROM latest_observations o JOIN machines m ON m.id=o.machine_id WHERE m.deleted_at IS NULL AND ($1::uuid IS NULL OR o.machine_id=$1) AND o.kind IN ('system','mining','power','sensors') ORDER BY o.machine_id,o.kind")
             .bind(machine).fetch_all(&self.pool).await.map_err(db)?.into_iter().map(decode).collect()
     }
-    async fn history(&self, machine: Uuid, kind: &str, hours: u32) -> Result<Vec<Observation>> {
-        let table = if hours <= 24 {
+    async fn history(
+        &self,
+        machine: Uuid,
+        kind: &str,
+        hours: u32,
+        until: Option<DateTime<Utc>>,
+    ) -> Result<Vec<Observation>> {
+        let until = until.unwrap_or_else(Utc::now);
+        // Raw samples are kept for 7 days; older or longer windows read the per-minute table.
+        let table = if hours <= 24 && until > Utc::now() - chrono::Duration::days(6) {
             "metrics"
         } else {
             "metric_minutes"
         };
         let query = format!(
-            "SELECT jsonb_build_object('machine_id',o.machine_id,'kind',o.kind,'observed_at',o.observed_at,'error',o.error,'data',metric_values(o.kind,o.data)) FROM (SELECT * FROM {table} WHERE machine_id=$1 AND kind=$2 AND observed_at>now()-make_interval(hours=>$3) ORDER BY observed_at DESC LIMIT 10000) o ORDER BY observed_at"
+            "SELECT jsonb_build_object('machine_id',o.machine_id,'kind',o.kind,'observed_at',o.observed_at,'error',o.error,'data',metric_values(o.kind,o.data)) FROM (SELECT * FROM {table} WHERE machine_id=$1 AND kind=$2 AND observed_at>$4-make_interval(hours=>$3) AND observed_at<=$4 ORDER BY observed_at DESC LIMIT 10000) o ORDER BY observed_at"
         );
         sqlx::query_scalar::<_, Value>(&query)
             .bind(machine)
             .bind(kind)
             .bind(hours.min(2160) as i32)
+            .bind(until)
             .fetch_all(&self.pool)
             .await
             .map_err(db)?

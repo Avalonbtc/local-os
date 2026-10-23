@@ -56,6 +56,10 @@ pub fn document() -> Value {
     schema::<MachineBatchInput>(&mut schemas, "MachineBatchInput");
     schema::<MachineBatchResult>(&mut schemas, "MachineBatchResult");
     schema::<FarmSettings>(&mut schemas, "FarmSettings");
+    schema::<CoinIcon>(&mut schemas, "CoinIcon");
+    schema::<CoinIconList>(&mut schemas, "CoinIconList");
+    schema::<CoinIconInput>(&mut schemas, "CoinIconInput");
+    schema::<CoinCandidate>(&mut schemas, "CoinCandidate");
     schema::<MachineStatus>(&mut schemas, "MachineStatus");
     schema::<StatusAlert>(&mut schemas, "StatusAlert");
     schemas.insert("JobAccepted".into(),json!({"type":"object","required":["job_id"],"properties":{"job_id":{"type":"string","format":"uuid"}}}));
@@ -106,6 +110,24 @@ pub fn document() -> Value {
         paths.entry(format!("/api/v1{path}")).or_insert(json!({}))["get"] =
             operation(None, output, array);
     }
+    paths.insert(
+        "/api/v1/coin-icons".into(),
+        json!({"get":operation(None,"CoinIconList",false)}),
+    );
+    let mut search = operation(None, "CoinCandidate", true);
+    search["parameters"] =
+        json!([{"name":"q","in":"query","required":true,"schema":{"type":"string"}}]);
+    paths.insert("/api/v1/coin-icons/search".into(), json!({"get":search}));
+    let symbol = json!([{"name":"symbol","in":"path","required":true,"schema":{"type":"string"}}]);
+    paths.insert(
+        "/api/v1/coin-icons/{symbol}".into(),
+        json!({
+            "parameters": symbol,
+            "get":{"responses":{"200":{"description":"The icon image","content":{"image/*":{"schema":{"type":"string","format":"binary"}}}},"404":{"description":"No icon for this symbol"}},"security":[{"session":[]},{"bearer":[]}]},
+            "put":operation(Some("CoinIconInput"),"CoinIcon",false),
+            "delete":{"responses":{"204":{"description":"Deleted"},"404":{"description":"Not found"}},"security":[{"session":[]},{"bearer":[]}]}
+        }),
+    );
     paths.insert(
         "/api/v1/settings/farm".into(),
         json!({"get":operation(None,"FarmSettings",false),"put":operation(Some("FarmSettings"),"FarmSettings",false)}),
@@ -197,6 +219,7 @@ pub fn document() -> Value {
                 json!({"name":"kind","in":"query","required":true,"schema":{"type":"string"}}),
             );
             params.push(json!({"name":"hours","in":"query","schema":{"type":"integer"}}));
+            params.push(json!({"name":"until","in":"query","schema":{"type":"string","format":"date-time"}}));
         }
         if !params.is_empty() {
             item["parameters"] = json!(params);

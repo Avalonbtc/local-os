@@ -368,3 +368,72 @@ async fn postgres_migrations_catalog_queue_leases_and_retention() {
     store.pool.close().await;
     assert!(store.enqueue(&request, &snapshot, &actor).await.is_err());
 }
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing to an isolated rigdeck_test database"]
+async fn postgres_coin_icon_library() {
+    let png = |tail: u8| vec![0x89, b'P', b'N', b'G', 13, 10, 26, 10, tail];
+    let url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL");
+    assert!(url.ends_with("/rigdeck_test"));
+    let store = PgStore::connect(&url).await.unwrap();
+    store.migrate().await.unwrap();
+    let name = format!("icons-{}", Uuid::new_v4());
+    store.create_admin(&name, "not-used").await.unwrap();
+    let (id, _) = store.password_hash(&name).await.unwrap().unwrap();
+    let actor = Actor {
+        id,
+        name,
+        token_id: None,
+    };
+    let symbol = format!("T{}", &Uuid::new_v4().simple().to_string()[..8]).to_uppercase();
+    let icon = CoinIcon {
+        symbol: symbol.clone(),
+        source: "url".into(),
+        content_type: "image/png".into(),
+        source_ref: Some("https://example.com/a.png".into()),
+        updated_at: chrono::Utc::now(),
+    };
+    store
+        .save_coin_icon(&icon, &png(b'A'), &actor)
+        .await
+        .unwrap();
+    // Saving again replaces the image and its source.
+    let replaced = CoinIcon {
+        source: "coingecko".into(),
+        source_ref: Some("kaspa".into()),
+        ..icon.clone()
+    };
+    store
+        .save_coin_icon(&replaced, &png(b'B'), &actor)
+        .await
+        .unwrap();
+    let (found, bytes) = store.coin_icon(&symbol).await.unwrap().unwrap();
+    assert_eq!(found.source, "coingecko");
+    assert_eq!(bytes, png(b'B'));
+    assert!(
+        store
+            .coin_icons()
+            .await
+            .unwrap()
+            .iter()
+            .any(|i| i.symbol == symbol)
+    );
+    // The table refuses what the application never sends: lower case, unknown types, empty data.
+    let bad = CoinIcon {
+        symbol: "lower".into(),
+        ..icon.clone()
+    };
+    assert!(store.save_coin_icon(&bad, b"x", &actor).await.is_err());
+    let bad = CoinIcon {
+        content_type: "text/html".into(),
+        ..icon.clone()
+    };
+    assert!(store.save_coin_icon(&bad, b"x", &actor).await.is_err());
+    assert!(store.save_coin_icon(&icon, b"", &actor).await.is_err());
+    store.delete_coin_icon(&symbol, &actor).await.unwrap();
+    assert!(store.coin_icon(&symbol).await.unwrap().is_none());
+    assert!(matches!(
+        store.delete_coin_icon(&symbol, &actor).await,
+        Err(Error::NotFound)
+    ));
+}

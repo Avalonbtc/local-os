@@ -674,6 +674,159 @@
           }
         ]
       },
+      "CoinCandidate": {
+        "description": "A CoinGecko search hit; `thumb` is a data URL the controller fetched, so browsers never\ncontact CoinGecko themselves.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "market_cap_rank": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "thumb": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "symbol"
+        ],
+        "title": "CoinCandidate",
+        "type": "object"
+      },
+      "CoinIcon": {
+        "description": "One icon in the controller's coin icon library. Browsers only ever load icons from the\ncontroller; the image itself is served by `/api/v1/coin-icons/{symbol}`.",
+        "properties": {
+          "content_type": {
+            "type": "string"
+          },
+          "source": {
+            "description": "`upload`, `url`, `coingecko` (stored in the database) or `directory` (a file on the controller).",
+            "type": "string"
+          },
+          "source_ref": {
+            "description": "The link or CoinGecko id it came from; the file name for directory icons.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "source",
+          "content_type",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "CoinIconInput": {
+        "description": "How to add an icon: an uploaded file, a link the controller downloads once, or a CoinGecko coin.",
+        "oneOf": [
+          {
+            "properties": {
+              "content_type": {
+                "type": "string"
+              },
+              "data_base64": {
+                "type": "string"
+              },
+              "from": {
+                "const": "upload",
+                "type": "string"
+              }
+            },
+            "required": [
+              "from",
+              "content_type",
+              "data_base64"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "from": {
+                "const": "url",
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "from",
+              "url"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "from": {
+                "const": "coingecko",
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "from",
+              "id"
+            ],
+            "type": "object"
+          }
+        ],
+        "title": "CoinIconInput"
+      },
+      "CoinIconList": {
+        "properties": {
+          "directory": {
+            "description": "Where the controller reads dropped-in icon files from (`KAS.svg`, `TSC.png`, ...).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "icons": {
+            "items": {
+              "$ref": "#/components/schemas/CoinIcon"
+            },
+            "type": "array"
+          },
+          "search": {
+            "description": "Whether CoinGecko search is configured on this controller.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "icons",
+          "search"
+        ],
+        "title": "CoinIconList",
+        "type": "object"
+      },
       "Credential": {
         "oneOf": [
           {
@@ -2204,6 +2357,209 @@
         ]
       }
     },
+    "/api/v1/coin-icons": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoinIconList"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Forbidden or invalid CSRF"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict"
+          },
+          "503": {
+            "description": "Dependency unavailable"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/coin-icons/search": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CoinCandidate"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Forbidden or invalid CSRF"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict"
+          },
+          "503": {
+            "description": "Dependency unavailable"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/coin-icons/{symbol}": {
+      "delete": {
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "image/*": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The icon image"
+          },
+          "404": {
+            "description": "No icon for this symbol"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "symbol",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CoinIconInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoinIcon"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Forbidden or invalid CSRF"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Conflict"
+          },
+          "503": {
+            "description": "Dependency unavailable"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/flight-sheets": {
       "get": {
         "responses": {
@@ -3113,6 +3469,14 @@
           "name": "hours",
           "schema": {
             "type": "integer"
+          }
+        },
+        {
+          "in": "query",
+          "name": "until",
+          "schema": {
+            "format": "date-time",
+            "type": "string"
           }
         }
       ]

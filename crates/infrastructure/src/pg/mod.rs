@@ -1,6 +1,7 @@
 mod audit;
 pub(crate) use audit::audit_tx;
 mod catalog;
+mod coin_icons;
 mod fleet;
 mod flights;
 mod identity;

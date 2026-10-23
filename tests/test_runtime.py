@@ -443,6 +443,71 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "identity changed"):
             self.rt.adopt({"name": "legacy", "pid": os.getpid(), "start_identity": "wrong"})
 
+    def thermal_fixture(self, **policy):
+        self.rt.atomic(self.rt.ROOT / "policy.json", {"digest": "d" * 64, "policy": policy})
+        for name in ("cpu1", "cpu2"):
+            self.rt.update(name, desired="running", maintenance=False, phase="running")
+        calls = []
+
+        def fake_stop(name, desired="stopped", maintenance=False):
+            calls.append(("stop", name))
+            self.rt.update(name, desired=desired, maintenance=maintenance, phase="stopped")
+
+        def fake_start(name, version=None, preserve=False):
+            calls.append(("start", name))
+            self.rt.update(name, desired="running", maintenance=False, phase="running")
+
+        return calls, patch.object(self.rt, "stop", fake_stop), patch.object(self.rt, "start", fake_start)
+
+    def test_thermal_guard_pauses_and_resumes_miners(self):
+        calls, stop, start = self.thermal_fixture(critical_temp_c=80, critical_action="stop_miner")
+        with stop, start:
+            self.rt.thermal_guard({"cpu_temperature": 60, "gpus": [{"temperature_c": 79}]})
+            self.assertEqual(calls, [])
+            self.rt.thermal_guard({"cpu_temperature": 60, "gpus": [{"temperature_c": 82}]})
+            self.assertEqual(calls, [("stop", "cpu1"), ("stop", "cpu2")])
+            self.assertEqual(self.rt.state("cpu1")["desired"], "running")
+            # Still above the hysteresis band: stay paused, nothing stopped twice.
+            self.rt.thermal_guard({"cpu_temperature": 75})
+            self.assertEqual(len(calls), 2)
+            self.rt.thermal_guard({"cpu_temperature": 70})
+        self.assertEqual(calls[2:], [("start", "cpu1"), ("start", "cpu2")])
+        self.assertEqual(self.rt.read(self.rt.ROOT / self.rt.THERMAL_FILE)["paused"], [])
+
+    def test_thermal_guard_leaves_manually_stopped_miners_stopped(self):
+        calls, stop, start = self.thermal_fixture(critical_temp_c=80)
+        with stop, start:
+            self.rt.thermal_guard({"cpu_temperature": 90})
+            self.rt.update("cpu2", desired="stopped")
+            self.rt.thermal_guard({"cpu_temperature": 40})
+        self.assertEqual(calls[2:], [("start", "cpu1")])
+
+    def test_thermal_guard_reboot_is_rate_limited(self):
+        calls, stop, start = self.thermal_fixture(critical_temp_c=80, critical_action="reboot")
+        with stop, start, patch.object(self.rt.subprocess, "run") as run:
+            self.rt.thermal_guard({"cpu_temperature": 95}, now=10_000)
+            self.rt.thermal_guard({"cpu_temperature": 95}, now=10_060)
+        run.assert_called_once_with(["systemctl", "reboot"], check=True)
+        self.assertEqual(calls, [])
+
+    def test_thermal_guard_ignores_invalid_limits_and_missing_readings(self):
+        calls, stop, start = self.thermal_fixture(critical_temp_c=True)
+        with stop, start:
+            self.rt.thermal_guard({"cpu_temperature": 200})
+            self.rt.atomic(self.rt.ROOT / "policy.json", {"digest": "d" * 64, "policy": {"critical_temp_c": 80}})
+            self.rt.thermal_guard({"cpu_temperature": None, "gpus": [{"temperature_c": None}]})
+        self.assertEqual(calls, [])
+
+    def test_boot_start_honours_maintenance_mode_and_thermal_pause(self):
+        calls, stop, start = self.thermal_fixture(maintenance_mode=True)
+        with stop, start:
+            self.rt.boot_start()
+            self.assertEqual(calls, [])
+            self.rt.atomic(self.rt.ROOT / "policy.json", {"digest": "d" * 64, "policy": {}})
+            self.rt.atomic(self.rt.ROOT / self.rt.THERMAL_FILE, {"paused": ["cpu2"]})
+            self.rt.boot_start()
+        self.assertEqual(calls, [("start", "cpu1")])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

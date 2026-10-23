@@ -265,6 +265,7 @@ async fn statuses_alerts_and_one_evaluation_pass() {
     let remote = Arc::new(SshExecutor::default());
     let app = App {
         bios: None,
+        icons: None,
         repository: store.clone(),
         vault: Arc::new(Vault::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").unwrap()),
         remote: remote.clone(),

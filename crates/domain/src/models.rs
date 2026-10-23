@@ -913,3 +913,57 @@ mod oc_tests {
         assert!(many.validate().is_err());
     }
 }
+
+/// One icon in the controller's coin icon library. Browsers only ever load icons from the
+/// controller; the image itself is served by `/api/v1/coin-icons/{symbol}`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CoinIcon {
+    pub symbol: String,
+    /// `upload`, `url`, `coingecko` (stored in the database) or `directory` (a file on the controller).
+    pub source: String,
+    pub content_type: String,
+    /// The link or CoinGecko id it came from; the file name for directory icons.
+    pub source_ref: Option<String>,
+    pub updated_at: DateTime<Utc>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CoinIconList {
+    pub icons: Vec<CoinIcon>,
+    /// Where the controller reads dropped-in icon files from (`KAS.svg`, `TSC.png`, ...).
+    pub directory: Option<String>,
+    /// Whether CoinGecko search is configured on this controller.
+    pub search: bool,
+}
+/// How to add an icon: an uploaded file, a link the controller downloads once, or a CoinGecko coin.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "from", rename_all = "snake_case")]
+pub enum CoinIconInput {
+    Upload {
+        content_type: String,
+        data_base64: String,
+    },
+    Url {
+        url: String,
+    },
+    Coingecko {
+        id: String,
+    },
+}
+/// A CoinGecko search hit; `thumb` is a data URL the controller fetched, so browsers never
+/// contact CoinGecko themselves.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CoinCandidate {
+    pub id: String,
+    pub name: String,
+    pub symbol: String,
+    pub market_cap_rank: Option<u32>,
+    pub thumb: Option<String>,
+}
+/// Image bytes on their way into or out of the icon library.
+#[derive(Debug, Clone)]
+pub struct IconImage {
+    pub content_type: String,
+    pub bytes: Vec<u8>,
+}
+pub const COIN_ICON_MAX_BYTES: usize = 256 * 1024;
+pub const COIN_ICON_TYPES: [&str; 4] = ["image/svg+xml", "image/png", "image/webp", "image/jpeg"];

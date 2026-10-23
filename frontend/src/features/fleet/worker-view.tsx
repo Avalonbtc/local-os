@@ -1,6 +1,7 @@
 // HiveOS worker page: coloured header band, miner panel with per-device tiles, status line,
 // recent-message chips, the device table (CPU + every GPU) and the system tiles at the bottom.
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { App, Button, Modal, Popconfirm, Space, Tooltip } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -19,23 +20,16 @@ import {
 } from "../../shared/api";
 import { bytes, hashrate, number } from "../../shared/ui";
 import {
-  CoinBadge,
   IconBolt,
-  IconChipDriver,
-  IconClock,
   IconClose,
   IconCpu,
-  IconFan,
-  IconGauge,
   IconGpu,
-  IconLayers,
-  IconMemory,
-  IconNetwork,
   IconPickaxe,
-  IconThermometer,
+  IconRocket,
   IconTrash,
   IconTune,
 } from "../../shared/icons";
+import { CoinBadge } from "../../shared/coins";
 
 type Gpu = {
   id: string;
@@ -63,6 +57,8 @@ export function duration(seconds?: number) {
   const s = Math.floor(seconds % 60);
   return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : m ? `${m}m ${s}s` : `${s}s`;
 }
+/** GDDR6X throttles near 110 °C; from here the memory temperature is shown on the row. */
+const MEM_HOT = 100;
 function tempClass(value?: number, limit = 85) {
   if (value === undefined) return "";
   return value > limit ? "hot" : value > limit - 10 ? "warm" : "ok";
@@ -84,173 +80,192 @@ function gpuRates(gpus: Gpu[], instances: Data[]) {
   return rates;
 }
 
+/** HiveOS puts the worker action icons in the top navigation bar; phones keep them in the header. */
+function TopTools({ children }: { children: ReactNode }) {
+  const [slot, setSlot] = useState<HTMLElement | null>(null);
+  const [wide, setWide] = useState(() => window.matchMedia("(min-width: 861px)").matches);
+  useEffect(() => {
+    setSlot(document.getElementById("rd-top-tools"));
+    const query = window.matchMedia("(min-width: 861px)");
+    const change = () => setWide(query.matches);
+    query.addEventListener("change", change);
+    return () => query.removeEventListener("change", change);
+  }, []);
+  return slot && wide ? createPortal(children, slot) : <div className="wk-band-tools">{children}</div>;
+}
+
+const FAVORITES = "rigdeck:fleet-favorites";
+/** The fleet list's favourites (☆), shared through localStorage like the list does. */
+function useFavorite(id: string) {
+  const read = () => {
+    try {
+      return (JSON.parse(localStorage.getItem(FAVORITES) ?? "[]") as string[]).includes(id);
+    } catch {
+      return false;
+    }
+  };
+  const [on, setOn] = useState(read);
+  const toggle = () => {
+    try {
+      const list = JSON.parse(localStorage.getItem(FAVORITES) ?? "[]") as string[];
+      const next = list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+      localStorage.setItem(FAVORITES, JSON.stringify(next));
+      setOn(next.includes(id));
+    } catch {
+      setOn(!on);
+    }
+  };
+  return [on, toggle] as const;
+}
+
+/**
+ * HiveOS worker header, two lines. 1: ☆ name, flight sheet badge | LA and power.
+ * 2: booted, miner state, miner names, runtime version | kernel, driver, device summary.
+ */
 export function WorkerBand({
   machine,
   system,
   power,
+  instances,
   actions,
 }: {
   machine: Machine;
   system?: Observation;
   power?: Observation;
+  instances: Data[];
   actions?: ReactNode;
 }) {
   const d = data(system?.data);
   const online = isFresh(system);
-  const reading = machinePower(system);
+  const reading = machinePower(system, machine.policy);
   const off = isFresh(power, 90) && String(data(power?.data).state ?? "").toLowerCase() === "off";
-  return (
-    <div className={`wk-band ${online ? "" : "offline"}`}>
-      <div className="wk-band-name">
-        <strong>{machine.name}</strong>
-        {machine.is_controller && <small className="wk-controller">主控</small>}
-        {!online && <span className="wk-band-state">{off ? "已关机" : "离线"}</span>}
-      </div>
-      <div className="wk-band-tools">{actions}</div>
-      <div className="wk-band-right">
-        <span>
-          <IconGauge size={14} /> LA {online ? (d.load ?? []).map((n: number) => number(n, 2)).join(" ") : "—"}
-        </span>
-        <Tooltip title={reading.source}>
-          <span className="wk-power">
-            <IconBolt size={14} /> {reading.watts === undefined ? "—" : `${number(reading.watts, 1)}W`}
-          </span>
-        </Tooltip>
-      </div>
-    </div>
-  );
-}
-
-/** Left: flight sheet, miner name / version / shares, coin + pool + hashrate. Right: device tiles. */
-export function MinerPanel({ machine, system, instances }: { machine: Machine; system?: Observation; instances: Data[] }) {
-  const d = data(system?.data);
-  const online = isFresh(system);
-  const gpus: Gpu[] = online && Array.isArray(d.gpus) ? d.gpus : [];
-  const rates = gpuRates(gpus, instances);
-  const limit = num(data(machine.policy).gpu_temp_limit_c) ?? 85;
-  const sheets = [...new Map(instances.filter((i) => i.sheet_id).map((i) => [i.sheet_id, i.sheet_name])).entries()];
-  return (
-    <section className="wk-head">
-      <div className="wk-miners">
-        {sheets.length ? (
-          sheets.map(([sheetId, name]) => (
-            <div className="wk-sheet" key={String(sheetId)}>
-              <b>{String(name ?? "飞行表")}</b> 飞行表{" "}
-              <Link to={`/flight-sheets?edit=${sheetId}`} className="wk-edit">编辑</Link>
-            </div>
-          ))
-        ) : (
-          <div className="wk-sheet muted">未应用飞行表</div>
-        )}
-        {instances.map((i) => {
-          const fresh = isRunning(i);
-          const stats = fresh ? i.stats ?? {} : {};
-          const pool = String(i.pool ?? "").replace(/^[a-z+]+:\/\//i, "");
-          return (
-            <div className="wk-miner" key={i.instance}>
-              <div className="wk-miner-title">
-                <IconPickaxe size={13} />
-                <b>{i.miner_name ?? i.miner ?? i.instance}</b>
-                <span className="muted">{stats.version ?? i.package_version ? ` v${stats.version ?? i.package_version}` : ""}</span>
-                {typeof stats.accepted === "number" && (
-                  <span className="wk-shares">
-                    A {stats.accepted}
-                    {typeof stats.rejected === "number" && stats.rejected > 0 && <em> R {stats.rejected}</em>}
-                  </span>
-                )}
-                <span className="wk-algo">{String(stats.algorithm ?? i.configured_algorithm ?? "").toUpperCase()}</span>
-              </div>
-              <div className="wk-miner-coin">
-                <CoinBadge coin={coinOf(i)} />
-                <b>{coinOf(i)}</b>
-                <span className="wk-pool" title={String(i.pool ?? "")}>{pool || "—"}</span>
-                <b className={`wk-rate ${fresh ? "" : "stale"}`}>
-                  {fresh ? hashrate(stats.hashrate_hs) : i.process_alive ? "等待统计" : i.desired === "running" ? "未运行" : "已停止"}
-                </b>
-              </div>
-            </div>
-          );
-        })}
-        {!instances.length && <div className="muted">尚无托管矿工</div>}
-      </div>
-      <div className="wk-tiles" aria-label="设备读数">
-        <div className="wk-tile">
-          <span className={`wk-temp ${tempClass(num(d.cpu_temperature))}`}>
-            {num(d.cpu_temperature) !== undefined ? `${number(d.cpu_temperature, 0)}°` : "—"}
-          </span>
-          <span className="wk-fan">{online && num(d.cpu_pct) !== undefined ? `${number(d.cpu_pct, 0)}%` : "—"}</span>
-          <span className="wk-hs">
-            <IconCpu size={12} /> CPU
-          </span>
-        </div>
-        {gpus.map((gpu, index) => {
-          const own = rates.get(gpu.id) ?? [];
-          return (
-            <Tooltip key={gpu.id} title={`GPU ${index} · ${gpu.model ?? gpu.id}`}>
-              <div className="wk-tile">
-                <span className={`wk-temp ${tempClass(num(gpu.temperature_c), limit)}`}>
-                  {num(gpu.temperature_c) !== undefined ? `${number(gpu.temperature_c, 0)}°` : "—"}
-                </span>
-                <span className="wk-fan">{num(gpu.fan_pct) !== undefined ? `${number(gpu.fan_pct, 0)}%` : "—"}</span>
-                <span className="wk-hs">{own.length ? shortRate(own[0].hs) : `GPU ${index}`}</span>
-              </div>
-            </Tooltip>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-function shortRate(hs: number) {
-  const [value] = hashrate(hs).split(" ");
-  return value;
-}
-
-export function StatusLine({ machine, system, instances }: { machine: Machine; system?: Observation; instances: Data[] }) {
-  const d = data(system?.data);
-  const online = isFresh(system);
+  const [favorite, toggleFavorite] = useFavorite(machine.id);
+  const sheets = [...new Map(instances.filter((i) => i.sheet_id).map((i) => [String(i.sheet_id), String(i.sheet_name ?? "飞行表")])).entries()];
   const running = instances.filter(isRunning);
   const minerUptime = running.map((i) => num(i.stats?.uptime)).filter((v): v is number => v !== undefined);
+  const miners = [...new Set(instances.map((i) => [i.miner_name ?? i.instance, i.package_version].filter(Boolean).join("-")))];
   const gpus: Gpu[] = online && Array.isArray(d.gpus) ? d.gpus : [];
   const models = new Map<string, number>();
   for (const gpu of gpus) models.set(gpu.model ?? gpu.id, (models.get(gpu.model ?? gpu.id) ?? 0) + 1);
-  const drivers = Object.entries(data(d.gpu_drivers)).map(([vendor, version]) => `${vendor} ${version}`);
+  const shortModel = (model: string) => model.replace(/^(NVIDIA\s+)?(GeForce\s+)?|^(AMD\s+)?(Radeon\s+)?/i, "");
+  const drivers = Object.entries(data(d.gpu_drivers));
+  const load: number[] = online && Array.isArray(d.load) ? d.load : [];
   return (
-    <div className="wk-status">
-      <span>
-        <IconClock /> <b>{online ? "已启动" : "离线"}</b> {online && num(d.uptime) !== undefined ? `${duration(d.uptime)} 前` : ""}
-      </span>
-      {online && (
-        <span className={running.length ? "wk-ok" : "wk-warn"}>
-          <IconPickaxe /> <b>{running.length ? "挖矿软件正常运行" : instances.length ? "挖矿软件未运行" : "未运行矿工"}</b>{" "}
-          {minerUptime.length ? duration(Math.min(...minerUptime)) : ""}
-        </span>
-      )}
-      <span>
-        <IconNetwork /> IP <b>{data(d.addresses?.[0]).address ?? machine.host}</b>
-      </span>
-      {d.runtime_version && (
-        <span>
-          <IconLayers /> {d.runtime_version}
-        </span>
-      )}
-      {d.kernel && <span className="muted">{d.kernel}</span>}
-      {drivers.length > 0 && (
-        <span className="muted">
-          <IconChipDriver /> {drivers.join(" · ")}
-        </span>
-      )}
-      {d.cpu_model && (
-        <span className="wk-model">
-          <IconCpu /> {d.cpu_model}
-        </span>
-      )}
-      {[...models.entries()].map(([model, count]) => (
-        <span className="wk-model gpu" key={model}>
-          <IconGpu /> {model} × {count}
-        </span>
-      ))}
+    <div className={`wk-band ${online ? "" : "offline"}`}>
+      <TopTools>{actions}</TopTools>
+      <div className="wk-hdr-line">
+        <div className="wk-band-name">
+          <button
+            type="button"
+            className={`wk-star ${favorite ? "on" : ""}`}
+            aria-label={favorite ? "取消收藏" : "收藏"}
+            aria-pressed={favorite}
+            onClick={toggleFavorite}
+          >
+            {favorite ? "★" : "☆"}
+          </button>
+          <strong>{machine.name}</strong>
+          {machine.is_controller && <small className="wk-controller">主控</small>}
+          {sheets.length ? (
+            sheets.map(([sheetId, name]) => (
+              <Link key={sheetId} className="wk-fs" to={`/flight-sheets?edit=${sheetId}`}>
+                <IconRocket size={12} /> {name}
+              </Link>
+            ))
+          ) : (
+            <span className="wk-fs none">
+              <IconRocket size={12} /> 无飞行表
+            </span>
+          )}
+          {!online && <span className="wk-band-state">{off ? "已关机" : "离线"}</span>}
+        </div>
+        <div className="wk-band-right">
+          <span className="wk-la">
+            <b>LA</b>
+            {load.length ? load.map((n, i) => <i key={i}>{n.toFixed(2)}</i>) : <i>—</i>}
+          </span>
+          <Tooltip title={reading.source}>
+            <span className="wk-power">
+              <IconBolt size={12} /> {reading.watts === undefined ? "—" : reading.watts.toFixed(2)}
+              <small>W</small>
+            </span>
+          </Tooltip>
+        </div>
+      </div>
+      <div className="wk-hdr-line sub wk-status">
+        <div>
+          <span>
+            <b>{online ? "已启动" : "离线"}</b> {online && num(d.uptime) !== undefined ? `${duration(d.uptime)} 前` : ""}
+          </span>
+          {online && (
+            <span className={running.length ? "" : "wk-warn"}>
+              <b>{running.length ? "挖矿软件正常运行" : instances.length ? "挖矿软件未运行" : "未运行矿工"}</b>{" "}
+              {minerUptime.length ? duration(Math.min(...minerUptime)) : "--"}
+            </span>
+          )}
+          {miners.length > 0 && (
+            <span>
+              <IconPickaxe size={11} /> {miners.join(", ")}
+            </span>
+          )}
+          {d.runtime_version && <span className="wk-ver">↑ {d.runtime_version}</span>}
+        </div>
+        <div>
+          {d.kernel && <span>{d.kernel}</span>}
+          {drivers.map(([vendor, version]) => (
+            <span key={vendor}>
+              <em className={vendor === "NVIDIA" ? "nvidia" : "amd"}>{vendor.slice(0, 1)}</em>
+              {String(version)}
+            </span>
+          ))}
+          {models.size > 0
+            ? [...models.entries()].map(([model, count]) => (
+                <span key={model}>
+                  <em className={gpus.find((g) => (g.model ?? g.id) === model)?.vendor === "AMD" ? "amd" : "nvidia"}>{shortModel(model)}</em> <b>× {count}</b>
+                </span>
+              ))
+            : d.cpu_model && <span className="wk-model">{d.cpu_model}</span>}
+        </div>
+      </div>
     </div>
+  );
+}
+
+/** Running miners, one row each: miner, version, shares, algorithm; coin, pool, hashrate. */
+export function MinerPanel({ instances }: { instances: Data[] }) {
+  if (!instances.length) return null;
+  return (
+    <section className="wk-head">
+      {instances.map((i) => {
+        const fresh = isRunning(i);
+        const stats = fresh ? i.stats ?? {} : {};
+        const pool = String(i.pool ?? "").replace(/^[a-z+]+:\/\//i, "");
+        return (
+          <div className="wk-miner" key={i.instance}>
+            <div className="wk-miner-title">
+              <IconPickaxe size={13} />
+              <b>{i.miner_name ?? i.miner ?? i.instance}</b>
+              <span className="muted">{stats.version ?? i.package_version ? ` ${stats.version ?? i.package_version}` : ""}</span>
+              {typeof stats.accepted === "number" && (
+                <span className="wk-shares">
+                  A {stats.accepted}
+                  {typeof stats.rejected === "number" && stats.rejected > 0 && <em> R {stats.rejected}</em>}
+                </span>
+              )}
+              <span className="wk-algo">{String(stats.algorithm ?? i.configured_algorithm ?? "").toUpperCase()}</span>
+            </div>
+            <div className="wk-miner-coin">
+              <CoinBadge coin={coinOf(i)} />
+              <b>{coinOf(i)}</b>
+              <span className="wk-pool" title={String(i.pool ?? "")}>{pool || "—"}</span>
+              <b className={`wk-rate ${fresh ? "" : "stale"}`}>
+                {fresh ? hashrate(stats.hashrate_hs) : i.process_alive ? "等待统计" : i.desired === "running" ? "未运行" : "已停止"}
+              </b>
+            </div>
+          </div>
+        );
+      })}
+    </section>
   );
 }
 
@@ -401,24 +416,18 @@ export function DeviceTable({ machine, system, instances }: { machine: Machine; 
       <div className="wk-dev-row head" role="row">
         <span />
         <span />
-        <span className="right">算力</span>
-        <span className="center">
-          <IconThermometer size={13} /> 温度
-        </span>
-        <span className="right">负载</span>
-        <span className="right">
-          <IconBolt size={13} /> 功耗
-        </span>
-        <span className="right">
-          <IconFan size={13} /> 风扇
-        </span>
-        <span className="right">核心</span>
-        <span className="right">VDD</span>
-        <span className="right">显存</span>
+        <span className="right">HASH</span>
+        <span className="center">TEMP</span>
+        <span className="right" />
+        <span className="right" />
+        <span className="right">LOAD</span>
+        <span className="right">CORE</span>
+        <span className="right">MEM</span>
         <span className="center">{gpus.length > 0 ? tune("修改所有显卡参数") : null}</span>
       </div>
-      {(() => {
-        // One CPU row for the whole machine, like HiveOS; sockets show as "2 ×" and in the tooltip.
+      {(gpus.length === 0 || cpuMiners.length > 0) && (() => {
+        // GPU rigs list only their cards, like HiveOS; the CPU row is for CPU-only rigs or CPU mining.
+        // One row for the whole machine; sockets show as "2 ×" and in the tooltip.
         const topology = (d.topology ?? []) as Data[];
         const cores = new Set(topology.map((c) => `${c.socket}:${c.core}`)).size;
         const packages = ((d.cpu_power_packages ?? []) as Data[]).filter((p) => num(p.power_w) !== undefined);
@@ -446,12 +455,13 @@ export function DeviceTable({ machine, system, instances }: { machine: Machine; 
                 : "—"}
             </span>
             <span className={`center wk-temp ${tempClass(num(d.cpu_temperature))}`} data-label="温度">{cell(num(d.cpu_temperature), "°")}</span>
-            <span className="right" data-label="负载">{online ? cell(num(d.cpu_pct), "%") : "—"}</span>
+            <span className="right muted">—</span>
             <Tooltip title={packages.length > 1 ? packages.map((p, n) => `CPU ${n}: ${number(p.power_w, 0)} W`).join(" · ") : undefined}>
-              <span className="right" data-label="功耗">{cell(num(d.cpu_power_w), " W")}</span>
+              <span className="right wk-dev-power" data-label="功耗">
+                {num(d.cpu_power_w) !== undefined ? <><IconBolt size={11} /> {Number(d.cpu_power_w).toFixed(2)} <small>W</small></> : "—"}
+              </span>
             </Tooltip>
-            <span className="right muted">—</span>
-            <span className="right muted">—</span>
+            <span className="right" data-label="负载">{online ? cell(num(d.cpu_pct), "%") : "—"}</span>
             <span className="right muted">—</span>
             <span className="right muted">—</span>
             <span />
@@ -481,19 +491,22 @@ export function DeviceTable({ machine, system, instances }: { machine: Machine; 
                   ))
                 : "—"}
             </span>
-            <span className="center wk-temp-pair" data-label="温度">
-              <b className={`wk-temp ${tempClass(num(gpu.temperature_c), limit)}`}>{cell(num(gpu.temperature_c), "°")}</b>
-              {num(gpu.memory_temperature_c) !== undefined && (
-                <small className={`wk-temp ${tempClass(num(gpu.memory_temperature_c), 100)}`}>{cell(num(gpu.memory_temperature_c), "°")}</small>
-              )}
+            {/* HiveOS shows the core temperature; the memory junction is in the tooltip and only
+                flagged on the row once it reaches MEM_HOT. */}
+            <Tooltip title={num(gpu.memory_temperature_c) !== undefined ? `核心 ${cell(num(gpu.temperature_c), "°")} · 显存 ${cell(num(gpu.memory_temperature_c), "°")}` : undefined}>
+              <span className="center wk-temp-pair" data-label="温度">
+                <b className={`wk-temp ${tempClass(num(gpu.temperature_c), limit)}`}>{cell(num(gpu.temperature_c), "°")}</b>
+                {(num(gpu.memory_temperature_c) ?? 0) >= MEM_HOT && <em className="wk-mem-hot">显存 {cell(num(gpu.memory_temperature_c), "°")}</em>}
+              </span>
+            </Tooltip>
+            <span className="right" data-label="风扇">{cell(num(gpu.fan_pct), "%")}</span>
+            <span className="right wk-dev-power" data-label="功耗" title={num(gpu.power_limit_w) !== undefined ? `功耗墙 ${number(gpu.power_limit_w, 0)} W` : undefined}>
+              {num(gpu.power_w) !== undefined ? <><IconBolt size={11} /> {gpu.power_w!.toFixed(2)} <small>W</small></> : "—"}
             </span>
             <span className="right" data-label="负载">{cell(num(gpu.util_pct), "%")}</span>
-            <span className="right" data-label="功耗" title={num(gpu.power_limit_w) !== undefined ? `功耗墙 ${number(gpu.power_limit_w, 0)} W` : undefined}>
-              {cell(num(gpu.power_w), " W")}
+            <span className="right" data-label="核心 MHz" title={num(gpu.core_mv) !== undefined ? `${number(gpu.core_mv, 0)} mV` : undefined}>
+              {cell(num(gpu.core_mhz))}
             </span>
-            <span className="right" data-label="风扇">{cell(num(gpu.fan_pct), "%")}</span>
-            <span className="right" data-label="核心 MHz">{cell(num(gpu.core_mhz))}</span>
-            <span className="right" data-label="VDD mV">{cell(num(gpu.core_mv))}</span>
             <span className="right" data-label="显存 MHz">{cell(num(gpu.mem_mhz))}</span>
             <span className="center">{tune(`修改 GPU ${index} 参数`)}</span>
           </div>
@@ -503,62 +516,103 @@ export function DeviceTable({ machine, system, instances }: { machine: Machine; 
   );
 }
 
-/** Bottom tiles: load, CPU temperature, free memory, power, runtime and GPU driver. */
-export function SystemTiles({ system }: { system?: Observation }) {
+/** HiveOS bottom tiles: load averages, free memory (bar = share used), power, runtime, driver. */
+export function SystemTiles({ system, policy }: { system?: Observation; policy?: unknown }) {
   const d = data(system?.data);
   const online = isFresh(system);
   const load: number[] = online && Array.isArray(d.load) ? d.load : [];
-  const reading = machinePower(system);
+  const reading = machinePower(system, policy);
   const free = num(d.memory_total) !== undefined && num(d.memory_used) !== undefined ? d.memory_total - d.memory_used : undefined;
+  const usedPct = online && free !== undefined && d.memory_total > 0 ? (100 * (d.memory_total - free)) / d.memory_total : undefined;
   const drivers = Object.entries(data(d.gpu_drivers));
+  const [freeValue, freeUnit] = online && free !== undefined ? bytes(free).split(" ") : ["—", ""];
   return (
     <div className="wk-sys">
       <div className="wk-sys-tile wide">
-        <IconGauge size={26} className="wk-sys-icon" />
-        {["1 分钟", "5 分钟", "15 分钟"].map((label, i) => (
-          <span key={label}>
-            <b>{load[i] !== undefined ? number(load[i], 2) : "—"}</b>
-            <small>{label}</small>
-          </span>
-        ))}
-        <em>平均负载</em>
+        <div className="wk-sys-values">
+          {["1分钟", "5分钟", "15分钟"].map((label, i) => (
+            <span key={label}>
+              <b>{load[i] !== undefined ? load[i].toFixed(2) : "—"}</b>
+              <small>{label}</small>
+            </span>
+          ))}
+        </div>
+        <em>平均载入</em>
       </div>
-      <div className="wk-sys-tile">
-        <IconThermometer size={26} className="wk-sys-icon" />
-        <b>{online && num(d.cpu_temperature) !== undefined ? `${number(d.cpu_temperature, 0)}°` : "—"}</b>
-        <em>CPU 温度</em>
-      </div>
-      <div className="wk-sys-tile">
-        <IconMemory size={26} className="wk-sys-icon" />
-        <b>{online && free !== undefined ? bytes(free) : "—"}</b>
+      <div className="wk-sys-tile" style={usedPct !== undefined ? ({ "--used": `${usedPct}%` } as CSSProperties) : undefined}>
+        {usedPct !== undefined && <i className="wk-sys-bar" aria-hidden />}
+        <div className="wk-sys-values">
+          <b>{freeValue}</b>
+          <small>{freeUnit}</small>
+        </div>
         <em>剩余内存</em>
       </div>
+      <Tooltip title={reading.source}>
+        <div className="wk-sys-tile">
+          <div className="wk-sys-values">
+            <IconBolt size={13} className="wk-sys-bolt" />
+            <b>{reading.watts === undefined ? "—" : reading.watts.toFixed(2)}</b>
+            <small>W</small>
+          </div>
+          <em>功耗</em>
+        </div>
+      </Tooltip>
       <div className="wk-sys-tile">
-        <IconBolt size={26} className="wk-sys-icon power" />
-        <b>
-          {reading.watts === undefined ? "—" : `${number(reading.watts, 1)} W`}
-        </b>
-        <em>{reading.label}</em>
-      </div>
-      <div className="wk-sys-tile">
-        <IconLayers size={26} className="wk-sys-icon" />
-        <b>{d.runtime_version ?? "—"}</b>
+        <div className="wk-sys-values">
+          <b>{d.runtime_version ?? "—"}</b>
+        </div>
         <em>
-          运行层版本
+          系统版本
           {d.transport === "push" ? " · 主动上报" : d.transport === "ssh" ? " · SSH 读取" : ""}
         </em>
       </div>
       {drivers.length > 0 && (
         <div className="wk-sys-tile">
-          <IconChipDriver size={26} className="wk-sys-icon" />
-          {drivers.map(([vendor, version]) => (
-            <b key={vendor}>
-              <small>{vendor.slice(0, 1)}</small> {String(version)}
-            </b>
-          ))}
+          <div className="wk-sys-values">
+            {drivers.map(([vendor, version]) => (
+              <span key={vendor}>
+                <em className={vendor === "NVIDIA" ? "nvidia" : "amd"}>{vendor.slice(0, 1)}</em> <b className="small">{String(version)}</b>
+              </span>
+            ))}
+          </div>
           <em>驱动</em>
         </div>
       )}
+    </div>
+  );
+}
+
+/** HiveOS hardware lines under the tiles: two plain label / value columns. */
+export function WorkerInfo({ machine, system }: { machine: Machine; system?: Observation }) {
+  const d = data(system?.data);
+  const topology = (d.topology ?? []) as Data[];
+  const sockets = new Set(topology.map((c) => c.socket)).size;
+  const cpu = d.cpu_model ? `${d.logical_cpus ?? topology.length ?? ""} × ${d.cpu_model}`.replace(/^ × /, "") : undefined;
+  const line = (label: string, value: ReactNode) =>
+    value === undefined || value === null || value === "" ? null : (
+      <div className="wk-info-line" key={label}>
+        <span>{label}</span>
+        <b>{value}</b>
+      </div>
+    );
+  return (
+    <div className="wk-info">
+      <div>
+        {line("主板", d.board)}
+        {line("CPU", cpu)}
+        {line("拓扑", topology.length ? `${sockets} 路 / ${new Set(topology.map((c) => `${c.socket}:${c.core}`)).size} 核 / ${topology.length} 线程` : undefined)}
+        {line("内存", num(d.memory_total) !== undefined ? bytes(d.memory_total) : undefined)}
+        {line("BIOS", d.bios)}
+        {line("BMC", machine.bmc?.url)}
+      </div>
+      <div>
+        {line("系统类型", d.os)}
+        {line("内核", d.kernel)}
+        {line("内网 IP", (d.addresses ?? []).map((a: Data) => a.address).join(", ") || undefined)}
+        {line("SSH", `${machine.username}@${machine.host}:${machine.port}`)}
+        {line("标签", machine.tags.length ? machine.tags.join(", ") : undefined)}
+        {line("最近采集", system?.observed_at ? new Date(system.observed_at).toLocaleString("zh-CN", { hour12: false }) : undefined)}
+      </div>
     </div>
   );
 }

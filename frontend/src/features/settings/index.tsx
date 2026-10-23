@@ -42,7 +42,7 @@ function FarmSettingsForm() {
         onFinish={async (values) => {
           setBusy(true);
           try {
-            const saved = await unwrap(client.PUT("/api/v1/settings/farm", { body: values }));
+            const saved = await unwrap(client.PUT("/api/v1/settings/farm", { body: { ...settings.data!, ...values } }));
             queryClient.setQueryData(["farm-settings"], saved);
             message.success("已保存");
           } catch (e) {

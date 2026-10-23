@@ -3,7 +3,6 @@ import {
   Alert,
   App,
   Button,
-  Descriptions,
   Form,
   Input,
   Modal,
@@ -12,7 +11,6 @@ import {
   Spin,
   Table,
   Tabs,
-  Tag,
 } from "antd";
 import {
   useParams,
@@ -34,7 +32,6 @@ import {
 } from "../../shared/api";
 import {
   QueryState,
-  bytes,
   number,
   hashrate,
   Status,
@@ -45,12 +42,12 @@ import { WorkerOverclock } from "../overclock";
 import {
   MessagesFeed,
   MinerLogViewer,
-  PerformanceCharts,
   WatchdogSettings,
   WorkerActions,
 } from "./worker";
+import { AutofanSettings, WorkerOptions, WorkerStats } from "./worker-tabs";
 import { MachineEditor, BatchModal } from "./controls";
-import { DeviceTable, MinerPanel, RecentChips, StatusLine, SystemTiles, WorkerBand } from "./worker-view";
+import { DeviceTable, MinerPanel, RecentChips, SystemTiles, WorkerBand, WorkerInfo } from "./worker-view";
 
 // xterm is only downloaded when a terminal tab is opened.
 const TerminalPane = lazy(() => import("../terminal").then((m) => ({ default: m.TerminalPane })));
@@ -69,8 +66,7 @@ export function MachineDetail() {
   const power = latest(telemetry.data, id!, "power");
   const software = latest(telemetry.data, id!, "software");
   const events = latest(telemetry.data, id!, "events");
-  const d = data(system?.data);
-  const powerReading = machinePower(system);
+  const powerReading = machinePower(system, machine?.policy);
   const powerWatts = powerReading.watts;
   const instances: Data[] = data(mining?.data).instances ?? [];
   const [instance, setInstance] = useState<string>();
@@ -89,58 +85,10 @@ export function MachineDetail() {
     );
   const overview = (
     <>
+      <MinerPanel instances={instances} />
       <DeviceTable machine={machine} system={system} instances={instances} />
-      <SystemTiles system={system} />
-      <Descriptions
-        className="hardware-description"
-        title="硬件与连接"
-        column={{ xs: 1, sm: 1, md: 2 }}
-        items={[
-          { key: "cpu", label: "CPU", children: d.cpu_model ?? "待采集" },
-          { key: "board", label: "主板", children: d.board ?? "未采集" },
-          { key: "os", label: "操作系统", children: d.os ?? "未采集" },
-          { key: "kernel", label: "内核", children: d.kernel ?? "未采集" },
-          { key: "bios", label: "BIOS", children: d.bios ?? "未采集" },
-          {
-            key: "topology",
-            label: "拓扑",
-            children: d.topology
-              ? `${new Set(d.topology.map((c: Data) => c.socket)).size} 路 / ${new Set(d.topology.map((c: Data) => `${c.socket}:${c.core}`)).size} 核 / ${d.logical_cpus} 线程`
-              : "—",
-          },
-          { key: "memory", label: "物理内存", children: bytes(d.memory_total) },
-          {
-            key: "ip",
-            label: "内网 IP",
-            children: (d.addresses ?? []).map((a: Data) => a.address).join(", ") || "未采集",
-          },
-          {
-            key: "ssh",
-            label: "SSH",
-            children: `${machine.username}@${machine.host}:${machine.port}`,
-          },
-          { key: "bmc", label: "BMC", children: machine.bmc?.url ?? "未配置" },
-          {
-            key: "tags",
-            label: "分组 / 标签",
-            children: (
-              <Space>
-                <Tag>{machine.group || "未分组"}</Tag>
-                {machine.tags.map((t) => (
-                  <Tag key={t}>{t}</Tag>
-                ))}
-              </Space>
-            ),
-          },
-          {
-            key: "updated",
-            label: "最近采集",
-            children: system?.observed_at
-              ? new Date(system.observed_at).toLocaleString()
-              : "尚无数据",
-          },
-        ]}
-      />
+      <SystemTiles system={system} policy={machine.policy} />
+      <WorkerInfo machine={machine} system={system} />
     </>
   );
   const flight = (
@@ -196,24 +144,23 @@ export function MachineDetail() {
   );
   return (
     <>
+      <div className="wk-header">
       <WorkerBand
         machine={machine}
         system={system}
         power={power}
+        instances={instances}
         actions={
           <WorkerActions
             machine={machine}
             instances={instances}
             onBatch={setBatch}
-            onOpen={(panel) =>
-              panel === "log" ? setLogOpen(true) : panel === "settings" ? setEditor(true) : setParams({ tab: panel })
-            }
+            onOpen={(panel) => (panel === "log" ? setLogOpen(true) : setParams({ tab: panel }))}
           />
         }
       />
-      <MinerPanel machine={machine} system={system} instances={instances} />
-      <StatusLine machine={machine} system={system} instances={instances} />
       <RecentChips id={id!} />
+      </div>
       <Modal
         open={logOpen}
         onCancel={() => setLogOpen(false)}
@@ -234,6 +181,7 @@ export function MachineDetail() {
         />
       )}
       <Tabs
+        className="wk-tabs"
         activeKey={tab}
         onChange={(key) => setParams({ tab: key })}
         destroyOnHidden
@@ -241,11 +189,65 @@ export function MachineDetail() {
           { key: "overview", label: "概述", children: overview },
           { key: "flight", label: "飞行表", children: flight },
           {
+            key: "overclock",
+            label: "超频",
+            children: <WorkerOverclock machine={machine} />,
+          },
+          {
+            key: "autofan",
+            label: "Autofan",
+            children: <AutofanSettings key={JSON.stringify(machine.policy)} machine={machine} system={system} />,
+          },
+          {
             key: "performance",
             label: "统计",
-            children: <PerformanceCharts machine={machine} />,
+            children: <WorkerStats machine={machine} />,
           },
           { key: "messages", label: "活动", children: <MessagesFeed id={id!} /> },
+          {
+            key: "settings",
+            label: "设定",
+            children: (
+              <WorkerOptions
+                key={JSON.stringify([machine.name, machine.tags, machine.policy])}
+                machine={machine}
+                connection={
+                  <>
+                    <div className="wk-set-row">
+                      <div className="wk-set-label">
+                        <b>连接</b>
+                        <small>SSH 地址、凭据与 BMC</small>
+                      </div>
+                      <div className="wk-set-control">
+                        <Space wrap>
+                          <span className="wk-mono">{`${machine.username}@${machine.host}:${machine.port}`}</span>
+                          <Button onClick={() => setEditor(true)}>编辑连接</Button>
+                          <Button
+                            onClick={async () => {
+                              try {
+                                const r = await unwrap(
+                                  client.POST("/api/v1/machines/{id}/test", {
+                                    params: { path: { id: id! } },
+                                  }),
+                                );
+                                message.info(JSON.stringify(r));
+                              } catch (e) {
+                                message.error((e as Error).message);
+                              }
+                            }}
+                          >
+                            测试 SSH 连接
+                          </Button>
+                        </Space>
+                      </div>
+                    </div>
+                    <h3>算力监视器</h3>
+                    <WatchdogSettings key={JSON.stringify(machine.policy)} machine={machine} />
+                  </>
+                }
+              />
+            ),
+          },
           {
             key: "software",
             label: "运行软件",
@@ -296,11 +298,6 @@ export function MachineDetail() {
                 />
               </>
             ),
-          },
-          {
-            key: "overclock",
-            label: "超频",
-            children: <WorkerOverclock machine={machine} />,
           },
           {
             key: "sensors",
@@ -411,37 +408,6 @@ export function MachineDetail() {
                     <JsonView value={data(events?.data).items ?? []} />
                   </details>
                 )}
-              </>
-            ),
-          },
-          {
-            key: "settings",
-            label: "设定",
-            children: (
-              <>
-                <Space>
-                  <Button onClick={() => setEditor(true)}>
-                    编辑连接与恢复策略
-                  </Button>
-                  <Button
-                    onClick={async () => {
-                      try {
-                        const r = await unwrap(
-                          client.POST("/api/v1/machines/{id}/test", {
-                            params: { path: { id: id! } },
-                          }),
-                        );
-                        message.info(JSON.stringify(r));
-                      } catch (e) {
-                        message.error((e as Error).message);
-                      }
-                    }}
-                  >
-                    测试 SSH 连接
-                  </Button>
-                </Space>
-                <h3>看门狗与自动恢复</h3>
-                <WatchdogSettings key={JSON.stringify(machine.policy)} machine={machine} />
               </>
             ),
           },

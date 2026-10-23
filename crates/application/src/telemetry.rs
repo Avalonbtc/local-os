@@ -14,8 +14,9 @@ impl App {
         machine: Uuid,
         kind: &str,
         hours: u32,
+        until: Option<chrono::DateTime<Utc>>,
     ) -> Result<Vec<Observation>> {
-        Ok(summarize(self.history(machine, kind, hours).await?))
+        Ok(summarize(self.history(machine, kind, hours, until).await?))
     }
     pub async fn unread_messages(&self, machine: Uuid, limit: i64) -> Result<Vec<MachineMessage>> {
         self.repository.machine(machine).await?;
@@ -505,9 +506,15 @@ impl App {
     pub async fn latest(&self, machine: Option<Uuid>) -> Result<Vec<Observation>> {
         self.repository.latest(machine).await
     }
-    pub async fn history(&self, machine: Uuid, kind: &str, hours: u32) -> Result<Vec<Observation>> {
+    pub async fn history(
+        &self,
+        machine: Uuid,
+        kind: &str,
+        hours: u32,
+        until: Option<chrono::DateTime<Utc>>,
+    ) -> Result<Vec<Observation>> {
         self.repository
-            .history(machine, kind, hours.min(2160))
+            .history(machine, kind, hours.min(2160), until)
             .await
     }
 }

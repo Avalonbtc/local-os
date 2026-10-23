@@ -80,6 +80,7 @@ async fn batch_probe_and_create_report_per_row_and_queue_one_bootstrap() {
     let vault = Arc::new(Vault::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").unwrap());
     let app = App {
         bios: None,
+        icons: None,
         repository: store.clone(),
         vault,
         remote: Arc::new(Probe),

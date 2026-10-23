@@ -30,15 +30,17 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
   IconBiosChip,
-  IconLog,
-  IconPlayStop,
-  IconPlug,
+  IconCommand,
+  IconFan,
+  IconGauge,
+  IconPickaxe,
   IconPower,
-  IconRestart,
+  IconRefresh,
   IconRocket,
-  IconScreen,
   IconSettings,
+  IconTag,
   IconTerminal,
+  IconTrash,
   IconUpload,
 } from "../../shared/icons";
 import {
@@ -50,8 +52,10 @@ import {
   type Machine,
   type MachineInput,
   type MachineMessage,
+  useMachines,
 } from "../../shared/api";
-import { Chart, QueryState } from "../../shared/ui";
+import { QueryState } from "../../shared/ui";
+import { CommandDialog, FlightSheetPicker } from "./worker-dialogs";
 
 const levelIcon: Record<string, ReactNode> = {
   success: <CheckCircleFilled className="msg-icon success" />,
@@ -299,7 +303,7 @@ type WatchdogValues = {
   host_reboot_cooldown_minutes: number;
 };
 
-function machineInput(machine: Machine, policy: Data): MachineInput {
+export function machineInput(machine: Machine, policy: Data): MachineInput {
   return {
     name: machine.name,
     host: machine.host,
@@ -424,12 +428,33 @@ export function WatchdogSettings({ machine }: { machine: Machine }) {
 }
 
 // Detached so the job reports success before the host goes down (otherwise it ends "unknown").
-const REBOOT = "setsid -f sh -c 'sleep 3; systemctl reboot' >/dev/null 2>&1 </dev/null";
-const SHUTDOWN = "setsid -f sh -c 'sleep 3; systemctl poweroff' >/dev/null 2>&1 </dev/null";
+export const REBOOT = "setsid -f sh -c 'sleep 3; systemctl reboot' >/dev/null 2>&1 </dev/null";
+export const SHUTDOWN = "setsid -f sh -c 'sleep 3; systemctl poweroff' >/dev/null 2>&1 </dev/null";
 
-export type WorkerPanel = "log" | "console" | "ssh" | "settings";
+/** Save name / tags / policy changes through the regular machine update (credentials untouched). */
+export async function updateMachine(machine: Machine, changes: Partial<MachineInput>) {
+  await unwrap(
+    client.PUT("/api/v1/machines/{id}", {
+      params: { path: { id: machine.id } },
+      body: { ...machineInput(machine, data(machine.policy)), ...changes },
+    }),
+  );
+}
 
-/** HiveOS-style icon toolbar on the worker header: every action is an icon with a tooltip. */
+export type WorkerPanel = "log" | "console" | "ssh" | "settings" | "autofan";
+
+const BMC_ACTIONS: Record<string, string> = {
+  force_restart: "断电重启",
+  on: "开机",
+  shutdown: "优雅关机",
+  force_off: "强制断电",
+};
+
+/**
+ * HiveOS worker toolbar, in HiveOS order: power, remote shell, upgrade, run command, flight sheet,
+ * tags, miner actions, hashrate watchdog, Autofan, worker options, remove, refresh. RigDeck adds
+ * BMC power (inside the power menu) and BIOS.
+ */
 export function WorkerActions({
   machine,
   instances,
@@ -444,6 +469,9 @@ export function WorkerActions({
   const { message, modal } = App.useApp();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const [tagsOpen, setTagsOpen] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [watchdogOpen, setWatchdogOpen] = useState(false);
   const names = instances.map((i) => i.instance as string).filter(Boolean);
   const run = (title: string, action: Parameters<typeof submitJob>[0]["action"], danger = false) =>
     modal.confirm({
@@ -490,136 +518,150 @@ export function WorkerActions({
   );
   return (
     <div className="wk-tools" role="toolbar" aria-label="矿机操作">
-      {tool("重启矿工", <IconRestart />, () => miner("restart", "重启"), !names.length)}
       {menuTool(
-        "启动 / 停止矿工",
-        <IconPlayStop />,
-        [
-          { key: "start", label: "启动全部矿工" },
-          { key: "stop", label: "停止全部矿工", danger: true },
-          { type: "divider" },
-          { key: "pick", label: "逐个实例控制…" },
-        ],
-        ({ key }) => (key === "pick" ? onBatch("miner") : miner(key as "start" | "stop", key === "start" ? "启动" : "停止")),
-        !names.length,
-      )}
-      {tool("切换飞行表", <IconRocket />, () => onBatch("apply"))}
-      {tool("矿工日志", <IconLog />, () => onOpen("log"), !names.length)}
-      {tool("矿工控制台", <IconScreen />, () => onOpen("console"), !names.length)}
-      {tool("SSH 终端", <IconTerminal />, () => onOpen("ssh"))}
-      {menuTool(
-        "系统",
+        "电源动作",
         <IconPower />,
         [
-          { key: "reboot", label: "重启系统" },
+          { key: "reboot", label: "重启" },
           { key: "shutdown", label: "关机", danger: true },
           { type: "divider" },
-          { key: "command", label: "执行命令…" },
-          { key: "bootstrap", label: "部署 / 更新运行层" },
+          {
+            type: "group",
+            label: machine.bmc ? "BMC" : "BMC（未配置）",
+            children: Object.entries(BMC_ACTIONS).map(([key, label]) => ({
+              key: `bmc:${key}`,
+              label,
+              danger: key.startsWith("force"),
+              disabled: !machine.bmc,
+            })),
+          },
         ],
         ({ key }) => {
           if (key === "reboot")
             run("重启系统？矿工会在开机后按期望状态自动恢复。", { kind: "command", script: REBOOT, timeout_seconds: 60 });
           else if (key === "shutdown")
             run("关机？关机后只能通过 BMC 或现场开机。", { kind: "command", script: SHUTDOWN, timeout_seconds: 60 }, true);
-          else onBatch(key);
+          else {
+            const operation = key.slice(4);
+            run(`通过 BMC 执行「${BMC_ACTIONS[operation]}」？`, { kind: "power", operation }, operation.startsWith("force"));
+          }
         },
       )}
-      {menuTool(
-        machine.bmc ? "BMC 电源" : "BMC 电源（未配置 BMC）",
-        <IconPlug />,
-        [
-          { key: "on", label: "开机" },
-          { key: "shutdown", label: "优雅关机" },
-          { key: "force_restart", label: "强制重启（断电重启）", danger: true },
-          { key: "force_off", label: "强制断电", danger: true },
-        ],
-        ({ key }) =>
-          run(
-            `通过 BMC 执行「${{ on: "开机", shutdown: "优雅关机", force_restart: "强制重启", force_off: "强制断电" }[key]}」？`,
-            { kind: "power", operation: key },
-            key.startsWith("force"),
-          ),
-        !machine.bmc,
-      )}
-      {tool("BIOS", <IconBiosChip />, () => navigate(`/bios/${machine.id}`), !machine.bmc)}
+      {tool("SSH 终端", <IconTerminal />, () => onOpen("ssh"))}
       {tool("部署 / 更新运行层", <IconUpload />, () => onBatch("bootstrap"))}
-      {tool("设定", <IconSettings />, () => onOpen("settings"))}
+      {tool("运行命令", <IconCommand />, () => setCommandOpen(true))}
+      <FlightSheetPicker ids={[machine.id]}>{tool("选择飞行表", <IconRocket />)}</FlightSheetPicker>
+      {tool("编辑标签", <IconTag />, () => setTagsOpen(true))}
+      {menuTool(
+        "挖矿软件动作",
+        <IconPickaxe />,
+        [
+          { key: "restart", label: "重启挖矿软件" },
+          { key: "start", label: "启动挖矿软件" },
+          { key: "stop", label: "停止挖矿软件", danger: true },
+          { type: "divider" },
+          { key: "log", label: "挖矿软件日志" },
+          { key: "console", label: "挖矿软件控制台" },
+          { key: "pick", label: "逐个实例控制…" },
+        ],
+        ({ key }) => {
+          if (key === "log" || key === "console") onOpen(key);
+          else if (key === "pick") onBatch("miner");
+          else {
+            const operation = key as "start" | "stop" | "restart";
+            miner(operation, { start: "启动", stop: "停止", restart: "重启" }[operation]);
+          }
+        },
+        !names.length,
+      )}
+      {tool("算力监视器", <IconGauge />, () => setWatchdogOpen(true))}
+      {tool("Autofan 设定", <IconFan />, () => onOpen("autofan"))}
+      {tool("BIOS", <IconBiosChip />, () => navigate(`/bios/${machine.id}`), !machine.bmc)}
+      {tool("矿机选项", <IconSettings />, () => onOpen("settings"))}
+      {tool(
+        "移除",
+        <IconTrash />,
+        () =>
+          modal.confirm({
+            title: `移除矿机「${machine.name}」？`,
+            content: "只从面板移除记录和保存的凭据，不会停止矿机上正在运行的矿工。",
+            okText: "移除",
+            okButtonProps: { danger: true },
+            onOk: async () => {
+              try {
+                await unwrap(client.DELETE("/api/v1/machines/{id}", { params: { path: { id: machine.id } } }));
+                await queryClient.invalidateQueries({ queryKey: ["machines"] });
+                message.success("已移除");
+                navigate("/machines");
+              } catch (e) {
+                message.error((e as Error).message);
+              }
+            },
+          }),
+        false,
+        true,
+      )}
+      {tool("刷新", <IconRefresh />, () => {
+        void queryClient.invalidateQueries({ queryKey: ["machines"] });
+        void queryClient.invalidateQueries({ queryKey: ["telemetry"] });
+        void queryClient.invalidateQueries({ queryKey: ["messages", machine.id] });
+      })}
+      <TagsModal machine={machine} open={tagsOpen} onClose={() => setTagsOpen(false)} />
+      <CommandDialog ids={[machine.id]} open={commandOpen} onClose={() => setCommandOpen(false)} />
+      <Modal
+        open={watchdogOpen}
+        title={`算力监视器 · ${machine.name}`}
+        onCancel={() => setWatchdogOpen(false)}
+        footer={null}
+        width={640}
+        destroyOnHidden
+      >
+        <WatchdogSettings key={JSON.stringify(machine.policy)} machine={machine} />
+      </Modal>
     </div>
   );
 }
 
-const RANGES = [
-  { value: 1, label: "1 小时" },
-  { value: 6, label: "6 小时" },
-  { value: 24, label: "24 小时" },
-  { value: 168, label: "7 天" },
-  { value: 720, label: "30 天" },
-];
-
-function useHistory(id: string, kind: string, hours: number, enabled = true) {
-  return useQuery({
-    queryKey: ["history", id, kind, hours],
-    enabled,
-    queryFn: ({ signal }) =>
-      unwrap(
-        client.GET("/api/v1/machines/{id}/history", {
-          signal,
-          params: { path: { id }, query: { kind, hours, summary: true } },
-        }),
-      ),
-    refetchInterval: hours <= 24 ? 30000 : 300000,
-  });
-}
-
-export function PerformanceCharts({ machine }: { machine: Machine }) {
-  const [hours, setHours] = useState(6);
-  const system = useHistory(machine.id, "system", hours);
-  const mining = useHistory(machine.id, "mining", hours);
-  const at = (o: { observed_at: string; data: unknown }) =>
-    (data(o.data)._sample_observed_at as string | undefined) ?? o.observed_at;
-  const algorithms = [
-    ...new Set(
-      (mining.data ?? []).flatMap((o) =>
-        (data(o.data).instances ?? []).map((i: Data) => i.stats?.algorithm).filter(Boolean),
-      ),
-    ),
-  ] as string[];
-  const series = (key: string) =>
-    (system.data ?? []).map((o) => [at(o), typeof data(o.data)[key] === "number" ? data(o.data)[key] : null] as [string, number | null]);
+export function TagsModal({ machine, open, onClose }: { machine: Machine; open: boolean; onClose: () => void }) {
+  const { message } = App.useApp();
+  const queryClient = useQueryClient();
+  const machines = useMachines();
+  const [tags, setTags] = useState<string[]>(machine.tags);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open) setTags(machine.tags);
+  }, [open, machine.tags]);
+  const known = [...new Set((machines.data ?? []).flatMap((m) => m.tags))].sort();
   return (
-    <>
-      <Segmented
-        className="range-switch"
-        value={hours}
-        onChange={(v) => setHours(Number(v))}
-        options={RANGES}
+    <Modal
+      open={open}
+      title={`编辑标签 · ${machine.name}`}
+      onCancel={onClose}
+      confirmLoading={busy}
+      okText="保存"
+      onOk={async () => {
+        setBusy(true);
+        try {
+          await updateMachine(machine, { tags: tags.map((t) => t.trim()).filter(Boolean) });
+          await queryClient.invalidateQueries({ queryKey: ["machines"] });
+          message.success("标签已更新");
+          onClose();
+        } catch (e) {
+          message.error((e as Error).message);
+        } finally {
+          setBusy(false);
+        }
+      }}
+      destroyOnHidden
+    >
+      <Select
+        mode="tags"
+        style={{ width: "100%" }}
+        placeholder="选择或开始输入"
+        value={tags}
+        onChange={setTags}
+        options={known.map((t) => ({ value: t, label: t }))}
       />
-      <QueryState loading={system.isLoading} error={system.error}>
-        <div className="overview-history">
-          {algorithms.map((algorithm) => (
-            <Chart
-              key={algorithm}
-              label={`算力 · ${algorithm}`}
-              unit="H/s"
-              points={(mining.data ?? []).map((o) => {
-                const values = (data(o.data).instances ?? []).filter(
-                  (i: Data) =>
-                    i.stats?.algorithm === algorithm &&
-                    i.process_alive &&
-                    typeof i.stats?.hashrate_hs === "number" &&
-                    Math.abs(new Date(at(o)).getTime() / 1000 - (i.stats_observed_at ?? 0)) < 60,
-                );
-                return [at(o), values.length ? values.reduce((n: number, i: Data) => n + i.stats.hashrate_hs, 0) : null];
-              })}
-            />
-          ))}
-          <Chart label="CPU 使用率" points={series("cpu_pct")} />
-          <Chart label="CPU 温度" unit="°C" points={series("cpu_temperature")} />
-          <Chart label="内存使用率" points={series("memory_pct")} />
-          <Chart label="CPU 软件功耗" unit="W" points={series("cpu_power_w")} />
-        </div>
-      </QueryState>
-    </>
+    </Modal>
   );
 }

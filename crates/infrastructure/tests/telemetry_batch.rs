@@ -55,7 +55,7 @@ async fn batched_observations_events_messages_and_deltas() {
     assert_eq!(system.data["cpu_model"], "EPYC");
     let summary = store.latest_summary(Some(machine)).await.unwrap();
     assert!(summary.iter().all(|o| o.data.get("topology").is_none()));
-    let history = store.history(machine, "system", 1).await.unwrap();
+    let history = store.history(machine, "system", 1, None).await.unwrap();
     assert_eq!(
         history.len(),
         2,

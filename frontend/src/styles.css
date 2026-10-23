@@ -5,38 +5,39 @@
 
 /* ───────────────────────── Tokens ───────────────────────── */
 :root {
-  --bg: #13161a;
-  --bg-elev: #191d22;
-  --surface: #1f2429;
-  --surface-2: #262c32;
-  --surface-3: #2f363d;
-  --surface-hover: #323a42;
-  --border: #2b3138;
-  --border-strong: #3a424b;
-  --text: #e7eaee;
-  --text-2: #aeb7c2;
-  --text-3: #7d8894;
-  --accent: #f5a524;
-  --accent-strong: #ffb940;
-  --accent-soft: rgba(245, 165, 36, 0.13);
-  --blue: #52a8e8;
-  --blue-soft: rgba(82, 168, 232, 0.14);
-  --green: #7cc242;
-  --green-soft: rgba(124, 194, 66, 0.14);
+  --bg: #22262b;
+  --bg-elev: #1d2125;
+  --surface: #262b31;
+  --surface-2: #2f353c;
+  --surface-3: #363d45;
+  --surface-hover: #3a424b;
+  --border: #363d45;
+  --border-strong: #4a535d;
+  --text: #c6ccd2;
+  --text-strong: #eef0f2;
+  --text-2: #9ba5b1;
+  --text-3: #818e9c;
+  --accent: #ffae00;
+  --accent-strong: #ffc23d;
+  --accent-soft: rgba(255, 174, 0, 0.13);
+  --blue: #7bbeea;
+  --blue-soft: rgba(123, 190, 234, 0.14);
+  --green: #84bf40;
+  --green-soft: rgba(132, 191, 64, 0.14);
   --yellow: #f5c945;
-  --red: #f0555f;
-  --red-soft: rgba(240, 85, 95, 0.12);
+  --red: #ff3733;
+  --red-soft: rgba(255, 55, 51, 0.12);
   --purple: #c49bff;
-  --radius: 10px;
-  --radius-sm: 6px;
-  --radius-xs: 4px;
+  --radius: 4px;
+  --radius-sm: 3px;
+  --radius-xs: 2px;
   --shadow:
     0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.18);
-  --page-max: 1320px;
+  --page-max: 1240px;
   --gutter: 20px;
-  --top-h: 48px;
+  --top-h: 40px;
   --font:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Open Sans", "Segoe UI", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
   --mono: "JetBrains Mono", "Cascadia Code", "SF Mono", Consolas, monospace;
 
@@ -176,6 +177,31 @@ details > summary {
   display: inline-block;
   flex: 0 0 auto;
   vertical-align: -0.2em;
+}
+.coin-icon-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.coin-icon-list li {
+  display: grid;
+  grid-template-columns: 28px 90px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+.rd-coin-img {
+  flex: 0 0 auto;
+  border-radius: 2px;
+  object-fit: contain;
+  vertical-align: -3px;
+}
+.rd-coin-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
 }
 .rd-coin {
   display: inline-grid;
@@ -1879,6 +1905,137 @@ details > summary {
   max-width: 720px;
   margin-top: 10px;
 }
+
+/* HiveOS worker settings / Autofan: label and help on the left, control on the right. */
+.wk-settings {
+  max-width: 1040px;
+}
+.wk-settings > .ant-alert {
+  margin-bottom: 14px;
+}
+.wk-settings hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 18px 0;
+}
+.wk-settings h3 {
+  margin: 22px 0 6px;
+}
+.wk-set-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 24px;
+  padding: 9px 0;
+  align-items: start;
+}
+.wk-set-label b {
+  display: block;
+  font-weight: 600;
+  color: var(--text);
+}
+.wk-set-label small {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-3);
+  line-height: 1.45;
+}
+.wk-set-control {
+  min-width: 0;
+}
+.wk-set-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+.wk-mono {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+}
+.wk-temp {
+  font-size: 18px;
+  font-weight: 600;
+}
+.wk-temp.hot {
+  color: var(--red);
+}
+
+/* HiveOS worker statistics: day navigation, event timeline above the charts. */
+.wk-stats-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.wk-stats-day {
+  min-width: 120px;
+  text-align: center;
+  color: var(--text-2);
+}
+.wk-timeline-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px 8px;
+  margin-bottom: 12px;
+}
+.wk-timeline-box header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--text-2);
+}
+.wk-timeline {
+  position: relative;
+  height: 26px;
+  margin: 10px 0 4px;
+  border-bottom: 1px solid var(--border-strong);
+}
+.wk-event {
+  position: absolute;
+  bottom: 6px;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  border-radius: 50%;
+  background: var(--blue);
+  cursor: default;
+}
+.wk-event.success {
+  background: var(--green);
+}
+.wk-event.warning {
+  background: var(--yellow);
+}
+.wk-event.error {
+  background: var(--red);
+}
+.wk-timeline-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-3);
+}
+.wk-timeline-empty {
+  text-align: center;
+  padding: 4px 0 2px;
+  font-size: 12px;
+}
+@media (max-width: 860px) {
+  .wk-set-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .wk-stats-bar {
+    justify-content: flex-start;
+  }
+  .wk-timeline-axis span:nth-child(even) {
+    display: none;
+  }
+}
 .watchdog-form .ant-alert {
   margin-bottom: 16px;
 }
@@ -2118,11 +2275,28 @@ details > summary {
 .catalog-filters .ant-input-search {
   margin-left: auto;
 }
+/* HiveOS coin chips: small grey boxes with the coin icon. */
 .catalog-filters > .ant-btn {
   height: 28px;
-  padding-inline: 12px;
-  border-radius: 999px;
-  font-size: 12.5px;
+  padding-inline: 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 13px;
+  box-shadow: none;
+}
+.catalog-filters > .ant-btn:hover {
+  background: var(--surface-3) !important;
+  color: var(--text-strong) !important;
+}
+.catalog-filters > .ant-btn-primary {
+  background: var(--surface-3);
+  color: var(--text-strong);
+  box-shadow: inset 0 -1px 0 var(--text-strong);
+}
+.catalog-filters .rd-coin-label {
+  font-weight: 400;
 }
 .flight-card {
   display: flex;
@@ -2176,7 +2350,10 @@ details > summary {
   gap: 2px !important;
 }
 .coin-label {
-  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
   font-weight: 700;
 }
 
@@ -2345,9 +2522,8 @@ details > summary {
   font-size: 12px;
 }
 .wallet-cell b {
-  margin-left: 8px;
   font-weight: 500;
-  color: var(--text-2);
+  color: var(--text);
 }
 .wallet-cell .wallet-address {
   display: none;
@@ -3265,4 +3441,1406 @@ details > summary {
     transition: none !important;
     scroll-behavior: auto !important;
   }
+}
+
+
+/* ───────────────────────── HiveOS alignment ─────────────────────────
+   Measured on the.hiveos.farm: 40 px top bar on #22262b, a #1d2125 band holding the farm
+   summary (or worker header) and the tab row, content on #22262b; 14 px text, 3 px corners,
+   tabs #9ba5b1 with a 1 px #eef0f2 underline on the active one. */
+body {
+  font-size: 14px;
+}
+.rd-top {
+  background: var(--bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom: 0;
+}
+.rd-crumb {
+  font-size: 14px;
+  color: var(--text);
+}
+.rd-logo {
+  font-size: 14px;
+  color: var(--text-strong);
+}
+.rd-top-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.rd-top-tools .wk-tools {
+  gap: 5px;
+}
+.rd-top-tools .wk-tool {
+  width: 28px;
+  height: 32px;
+  color: var(--text);
+  border-radius: var(--radius-sm);
+}
+.rd-top-tools .wk-tool:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text-strong);
+}
+.rd-top-tools .wk-tool.danger:hover:not(:disabled) {
+  color: var(--red);
+}
+.rd-tabs {
+  height: 43px;
+  border-bottom: 0;
+}
+.rd-tabs-inner {
+  gap: 24px;
+}
+.rd-tabs a,
+.rd-tabs a:first-child {
+  padding: 0;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-2);
+}
+.rd-tabs a::after {
+  left: 0;
+  right: 0;
+  height: 1px;
+  border-radius: 0;
+}
+.rd-tabs a.active {
+  color: var(--text-strong);
+  font-weight: 400;
+}
+.rd-tabs a.active::after {
+  background: var(--text-strong);
+}
+.rd-main {
+  padding-top: 20px;
+}
+
+/* Worker page: header and tab row sit in the dark band, full width like the farm pages. */
+.wk-header,
+.wk-tabs > .ant-tabs-nav {
+  background: var(--bg-elev);
+  box-shadow: 0 0 0 100vmax var(--bg-elev);
+  clip-path: inset(0 -100vmax);
+}
+.wk-header {
+  margin-top: -20px;
+  padding-top: 12px;
+}
+.wk-band,
+.wk-band.offline {
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  color: var(--text);
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.wk-band-name::before {
+  display: none;
+}
+.wk-band-name strong {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.wk-band-right {
+  font-size: 13px;
+  color: var(--text-3);
+}
+.wk-power {
+  color: var(--blue);
+}
+.wk-head {
+  padding: 8px 0 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+.wk-tabs > .ant-tabs-nav {
+  margin-bottom: 20px;
+}
+.wk-tabs > .ant-tabs-nav::before {
+  border-bottom: 0 !important;
+}
+.wk-tabs .ant-tabs-tab {
+  padding: 12px 0 11px;
+  font-size: 14px;
+}
+.wk-tabs .ant-tabs-tab + .ant-tabs-tab {
+  margin-left: 24px;
+}
+.wk-tabs .ant-tabs-tab .ant-tabs-tab-btn {
+  color: var(--text-2);
+}
+.wk-tabs .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: var(--text-strong) !important;
+  text-shadow: none;
+}
+.wk-tabs .ant-tabs-ink-bar {
+  height: 1px !important;
+  background: var(--text-strong);
+}
+.wk-sys-tile {
+  background: var(--surface);
+  border: 0;
+  border-radius: var(--radius-sm);
+  min-height: 56px;
+}
+.wk-dev-row:not(.head) {
+  background: var(--surface-2);
+}
+@media (max-width: 860px) {
+  .rd-top-tools {
+    display: none;
+  }
+}
+
+/* Farm summary cards: 64 px, no border, light 20 px numbers (HiveOS). */
+.hive-farm-summary-inner {
+  grid-template-columns: repeat(auto-fit, minmax(147px, 1fr));
+  gap: 24px;
+  padding-top: 30px;
+}
+.hive-stat {
+  min-height: 64px;
+  padding: 8px 10px 7px;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+.hive-stat::before {
+  display: none;
+}
+.hive-stat-ratio::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: linear-gradient(to right, var(--green) var(--online), var(--accent) var(--online));
+}
+.hive-stat-line strong,
+.hive-stat-line em {
+  font-size: 20px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.hive-stat > span {
+  font-size: 12px;
+}
+@media (max-width: 600px) {
+  .hive-farm-summary-inner {
+    gap: 10px;
+  }
+}
+
+/* Worker page, HiveOS geometry (measured at 1200 px content width).
+   Header: 16 px/600 name (wraps at ~150 px like HiveOS), red "无飞行表", LA 12/13 px, power blue;
+   second line 11 px. Device rows 44 px on #2f353c with 10 px uppercase column labels above.
+   Tiles 56 px on #262b31 with 18 px/500 values; info lines 13 px in two columns. */
+.wk-band,
+.wk-band.offline {
+  display: block;
+}
+.wk-header {
+  padding: 26px 0 16px;
+}
+.wk-hdr-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+.wk-band-name {
+  align-items: flex-start;
+  gap: 6px;
+}
+.wk-band-name strong {
+  max-width: 160px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+}
+.wk-star {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font-size: 14px;
+  line-height: 20px;
+  cursor: pointer;
+}
+.wk-star.on {
+  color: var(--accent);
+}
+.wk-fs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--text-2);
+}
+.wk-fs.none {
+  color: var(--red);
+}
+.wk-band-right {
+  gap: 14px;
+  align-items: baseline;
+}
+.wk-la b {
+  margin-right: 2px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+.wk-la i {
+  margin-left: 8px;
+  font-style: normal;
+  font-size: 13px;
+  color: var(--text-3);
+}
+.wk-power {
+  font-size: 13px;
+}
+.wk-power small {
+  margin-left: 2px;
+  font-size: 10px;
+}
+.wk-hdr-line.sub {
+  margin-top: 14px;
+  padding: 0;
+  font-size: 11px;
+  color: var(--text-3);
+  flex-wrap: wrap;
+}
+.wk-hdr-line.sub > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 18px;
+  min-width: 0;
+}
+.wk-hdr-line.sub b {
+  color: var(--text);
+  font-weight: 600;
+}
+.wk-hdr-line.sub .wk-warn b {
+  color: var(--yellow);
+}
+.wk-hdr-line.sub em {
+  margin-right: 4px;
+  font-style: normal;
+  font-weight: 600;
+}
+.wk-hdr-line.sub .wk-model {
+  color: var(--text-3);
+}
+em.nvidia,
+.wk-sys-values em.nvidia {
+  color: var(--green);
+}
+em.amd,
+.wk-sys-values em.amd {
+  color: #b46fc3;
+}
+.wk-ver {
+  color: var(--accent);
+  font-weight: 700;
+}
+.wk-chips {
+  padding: 12px 0 0;
+}
+
+/* Miner rows above the device table. */
+.wk-head,
+.wk-tabs .wk-head {
+  display: block;
+  margin: 0 0 16px;
+  padding: 0;
+  background: none;
+  border: 0;
+}
+.wk-miner {
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.wk-miner + .wk-miner {
+  margin-top: 4px;
+}
+.wk-miner-title {
+  background: var(--surface-2);
+  font-size: 12px;
+}
+
+/* Device table */
+.wk-devices {
+  margin-top: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+@media (min-width: 861px) {
+  .wk-dev-row {
+    min-height: 44px;
+    padding: 4px 4px 4px 8px;
+    border-bottom: 0;
+    font-size: 14px;
+    color: var(--text);
+  }
+  .wk-dev-row:not(.head) {
+    background: var(--surface-2);
+    margin-bottom: 2px;
+  }
+}
+.wk-dev-row:not(.head):hover {
+  background: var(--surface-3);
+}
+.wk-dev-row.head {
+  min-height: 22px;
+  background: none;
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  color: var(--text-3);
+}
+.wk-dev-index,
+.wk-dev-row.cpu .wk-dev-index .rd-icon,
+.wk-dev-row:not(.cpu):not(.head) .wk-dev-index .rd-icon {
+  color: var(--text);
+  font-weight: 400;
+}
+.wk-dev-index small {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.wk-dev-model,
+.wk-dev-model.cpu,
+.wk-dev-model .nvidia {
+  color: var(--green);
+  font-weight: 400;
+}
+.wk-dev-model small {
+  font-size: 12px;
+}
+.wk-dev-row b {
+  font-weight: 400;
+}
+.wk-dev-power {
+  color: var(--text-3);
+}
+.wk-dev-power small {
+  font-size: 9px;
+}
+
+/* System tiles */
+.wk-sys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 26px 0 12px;
+}
+.wk-sys-tile,
+.wk-sys-tile.wide {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 120px;
+  min-height: 56px;
+  padding: 7px 15px 5px 7px;
+  overflow: hidden;
+  grid-column: auto;
+}
+.wk-sys-tile.wide {
+  min-width: 292px;
+}
+.wk-sys-values {
+  display: flex;
+  align-items: baseline;
+  gap: 4px 18px;
+  white-space: nowrap;
+}
+.wk-sys-values > span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+}
+.wk-sys-tile .wk-sys-values b {
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--text);
+}
+.wk-sys-tile .wk-sys-values b.small {
+  font-size: 12px;
+}
+.wk-sys-tile .wk-sys-values small {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text);
+}
+.wk-sys-tile em {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-3);
+}
+.wk-sys-values > .wk-sys-bolt {
+  align-self: center;
+  margin-right: -14px;
+  color: var(--text);
+}
+.wk-sys-bar {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: var(--used);
+  height: 2px;
+  background: var(--green);
+}
+
+/* Hardware lines */
+.wk-info {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 24px;
+}
+.wk-info-line {
+  display: flex;
+  gap: 6px;
+  min-height: 26px;
+  align-items: center;
+  font-size: 13px;
+}
+.wk-info-line span {
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.wk-info-line b {
+  font-weight: 400;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 860px) {
+  .wk-info {
+    grid-template-columns: 1fr;
+  }
+  .wk-hdr-line {
+    flex-wrap: wrap;
+  }
+  .wk-band-name strong {
+    max-width: none;
+  }
+}
+
+/* Worker page fine-tuning against the HiveOS screenshot. */
+.wk-band-name strong {
+  word-break: break-all;
+}
+.wk-la i {
+  margin-left: 4px;
+}
+.wk-devices {
+  margin-top: 40px;
+}
+.wk-head + .wk-devices {
+  margin-top: 0;
+}
+@media (min-width: 861px) {
+  .wk-dev-row {
+    grid-template-columns: 96px minmax(200px, 1fr) 130px 112px 56px 96px 56px 60px 60px 36px;
+  }
+}
+.wk-devices .wk-temp,
+.wk-devices .wk-temp.ok,
+.wk-devices .wk-temp-pair b {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text);
+}
+.wk-devices .wk-temp.warm {
+  color: var(--accent);
+}
+.wk-devices .wk-temp.hot {
+  color: var(--red);
+}
+.wk-sys-tile.wide {
+  flex-wrap: nowrap;
+  align-items: stretch;
+}
+.wk-sys-tile.wide em {
+  flex-basis: auto;
+}
+.wk-band-name strong {
+  max-width: 150px;
+}
+.wk-sys-values {
+  gap: 0 3px;
+}
+.wk-sys-tile.wide .wk-sys-values {
+  gap: 0 18px;
+}
+.wk-sys-values > .wk-sys-bolt {
+  margin-right: 0;
+}
+
+/* Fleet list rows, HiveOS geometry (1200 px): checkbox outside a 23 px #2f353c bar; columns
+   ☆ name 174 · icons 81 · uptime 55 · vendor marks 51 · miner (rest) · devices 225 · LA 60 ·
+   FAN 63 · power 80. Devices are 11 px squares coloured by temperature, readings on hover. */
+.hive-dev {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  background: var(--green);
+  cursor: default;
+}
+.hive-dev.warm {
+  background: var(--accent);
+}
+.hive-dev.hot {
+  background: var(--red);
+}
+.hive-dev.none {
+  background: var(--border-strong);
+}
+.hive-dev.cpu {
+  border-radius: 50%;
+}
+.hive-devices {
+  gap: 3px;
+}
+.hive-mark {
+  margin-right: 4px;
+  font-weight: 400;
+}
+.hive-mark.nvidia {
+  color: var(--green);
+}
+/* HiveOS mark colours: N green, A purple, C (CPU) yellow; Intel blue. */
+.hive-mark.amd {
+  color: #b46fc3;
+}
+.hive-mark.cpu {
+  color: #ffd500;
+}
+.hive-mark.intel {
+  color: var(--blue);
+}
+.hive-no-fs {
+  color: var(--red);
+  font-size: 12px;
+}
+.hive-machine-load b,
+.hive-machine-fan b {
+  margin-right: 3px;
+  color: var(--text-3);
+  font-weight: 600;
+}
+.hive-machine-fan {
+  color: var(--text);
+  white-space: nowrap;
+}
+.hive-machine-power small {
+  font-size: 9.6px;
+}
+.hive-dev-tip .ant-tooltip-inner {
+  min-height: 0;
+  padding: 3px 8px;
+  background: #16191d;
+  border-radius: 3px;
+  box-shadow: none;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 14px;
+  white-space: nowrap;
+}
+.hive-dev-tip-body {
+  display: inline-flex;
+  gap: 12px;
+}
+.hive-fleet-grid .hive-machine-fan {
+  display: none;
+}
+@media (min-width: 861px) {
+  .hive-fleet-list {
+    background: none;
+    border: 0;
+    border-radius: 0;
+    overflow: visible;
+  }
+  .hive-fleet-list .hive-machine-row {
+    grid-template-columns: 22px 174px 81px 55px 51px minmax(0, 1fr) 225px 60px 63px 80px;
+    gap: 0;
+    min-height: 23px;
+    padding: 0;
+    margin-bottom: 2px;
+    border: 0;
+    border-radius: 3px;
+    background: linear-gradient(to right, transparent 22px, var(--surface-2) 22px);
+    color: var(--text);
+    font-size: 12px;
+    line-height: 19px;
+  }
+  .hive-fleet-list .hive-machine-row::before {
+    display: none;
+  }
+  .hive-fleet-list .hive-machine-row:hover {
+    background: linear-gradient(to right, transparent 22px, var(--surface-3) 22px);
+  }
+  .hive-fleet-list .hive-machine-row > input {
+    margin: 0;
+  }
+  .hive-fleet-list .hive-machine-name {
+    gap: 6px;
+    padding-left: 4px;
+  }
+  .hive-fleet-list .hive-machine-name button {
+    width: 14px;
+    height: 16px;
+    font-size: 13px;
+    color: var(--text);
+  }
+  .hive-fleet-list .hive-machine-name a {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-strong);
+  }
+  .hive-fleet-list .hive-machine-alert {
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+    font-size: 12px;
+  }
+  .hive-fleet-list .hive-machine-uptime {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-3);
+  }
+  .hive-fleet-list .hive-mining-cell {
+    gap: 0;
+  }
+  .hive-fleet-list.comfortable .hive-machine-row {
+    min-height: 32px;
+    padding: 0;
+  }
+}
+@media (max-width: 860px) {
+  .hive-machine-fan {
+    display: none;
+  }
+}
+@media (min-width: 861px) {
+  /* All summary cards stay on one row like HiveOS, however many coins are mining. */
+  .hive-farm-summary-inner {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+}
+
+/* HiveOS bulk mode: the crumb reads "‹ 取消选定 N 矿机" and the action icons fill the top bar. */
+.rd-unselect {
+  font-size: 12px;
+  color: var(--text-2);
+}
+.rd-unselect b {
+  margin-left: 4px;
+  color: var(--text-strong);
+  font-weight: 600;
+}
+.hive-batch-bar .wk-tool {
+  color: var(--text);
+}
+.hive-batch-bar .wk-tools {
+  flex-wrap: wrap;
+}
+
+/* Flight sheets, HiveOS geometry: #363d45 panel; 276×67 #262b31 cards with a 14 px / 600 grey
+   label (dimmed until the step before is filled) and an orange action link on the right; a light
+   "创建飞行表" button; list rows #262b31 with the ••• menu outside. */
+.flight-composer {
+  background: var(--surface-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 10px 13px 14px;
+  margin-bottom: 20px;
+}
+.composer-heading {
+  margin-bottom: 14px;
+}
+.composer-heading h1 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+.fs-help-link {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.fs-help-link i {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--text-strong);
+  border-radius: 50%;
+  font-size: 10px;
+  font-style: normal;
+}
+.fs-help {
+  max-width: 360px;
+}
+.fs-help p {
+  margin: 0 0 6px;
+}
+.flight-stage {
+  padding-left: 20px;
+}
+.stage-number {
+  top: 3px;
+  width: 16px;
+  height: 15px;
+  border-radius: 2px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 400;
+}
+.flight-selectors {
+  gap: 11px;
+}
+.flight-field {
+  min-height: 67px;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.flight-field:focus-within {
+  border-color: var(--text-3);
+}
+.flight-field .ant-form-item-label {
+  padding: 0 !important;
+}
+.flight-field .ant-form-item-label > label,
+.fs-static > .fs-card-label {
+  width: 100%;
+  height: 27px;
+  padding: 7px 10px 0;
+  color: var(--text-3);
+  font-size: 14px;
+  font-weight: 600;
+}
+.fs-card-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+}
+.fs-card-link {
+  color: var(--accent) !important;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.flight-field.disabled .ant-form-item-label > label,
+.flight-field.disabled .fs-card-label {
+  color: var(--border);
+}
+.flight-field .ant-select-selector,
+.flight-field .ant-input {
+  padding-left: 10px !important;
+  font-size: 14px;
+}
+.flight-field.disabled .ant-select-selection-placeholder {
+  color: var(--border);
+}
+.fs-pool {
+  display: block;
+  width: 100%;
+  height: 38px;
+  padding: 0 10px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: 14px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fs-pool:disabled {
+  color: var(--border);
+  cursor: default;
+}
+.fs-miner-option {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+.fs-devices {
+  display: inline-flex;
+  gap: 6px;
+}
+.fs-devices em {
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.fs-devices em.nvidia {
+  color: var(--green);
+}
+.fs-devices em.amd {
+  color: #b46fc3;
+}
+.fs-devices em.cpu {
+  color: #ffd500;
+}
+.flight-field .ant-select-selection-item .fs-devices {
+  display: none;
+}
+.composer-bottom {
+  padding: 14px 0 0 20px;
+  border-top-color: var(--border-strong);
+}
+.composer-bottom > .ant-form-item {
+  width: 564px;
+  max-width: 100%;
+  padding: 0;
+  background: var(--surface);
+  border-color: var(--border);
+}
+.composer-bottom > .ant-form-item .ant-form-item-label {
+  padding: 7px 10px 0 !important;
+}
+.composer-bottom > .ant-form-item .ant-form-item-label > label {
+  color: var(--text-3);
+  font-size: 14px;
+  font-weight: 600;
+}
+.composer-bottom .ant-input {
+  padding: 2px 10px 8px;
+}
+.add-miner .muted {
+  font-size: 13px;
+  color: var(--text-3);
+}
+.fs-dark-button.ant-btn {
+  height: 30px;
+  padding: 0 12px;
+  background: var(--surface);
+  border-color: #464e59;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: none;
+}
+.composer-footer {
+  padding-left: 20px;
+}
+.fs-import {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 14px;
+}
+.fs-import .fs-dark-button.ant-btn {
+  height: 33px;
+  font-size: 13px;
+}
+.fs-footer-actions {
+  display: inline-flex;
+  gap: 10px;
+}
+.fs-create.ant-btn {
+  height: 31px;
+  background: var(--text);
+  border: 0;
+  color: var(--surface-3);
+  font-size: 13px;
+  font-weight: 600;
+}
+.fs-create.ant-btn:hover {
+  background: var(--text-strong) !important;
+  color: var(--surface-3) !important;
+}
+.fs-filters {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 6px 0 0 30px;
+  margin-bottom: 28px;
+}
+.fs-filters > button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font-size: 13px;
+  cursor: pointer;
+}
+.fs-filters > button.active {
+  color: var(--text-strong);
+}
+.fs-filters .ant-input-search {
+  width: 220px;
+  margin-left: auto;
+}
+.fs-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 22px 10px;
+}
+.fs-chips > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px 0 4px;
+  border: 0;
+  border-radius: 2px;
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.fs-chips > button.active {
+  box-shadow: inset 0 -1px 0 var(--text-strong);
+  color: var(--text-strong);
+}
+.fs-wallet-icon {
+  width: 14px;
+  height: 11px;
+  border-radius: 2px;
+  background: var(--text);
+}
+.flight-card {
+  gap: 10px;
+  margin: 0 0 6px 36px;
+  padding: 0;
+  background: none;
+  border: 0;
+}
+.flight-card-body {
+  padding: 3px 10px;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  min-height: 59px;
+}
+.flight-card-row {
+  grid-template-columns: 180px minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1.2fr);
+  gap: 10px;
+  font-size: 14px;
+  color: var(--text);
+}
+.fs-row-coin .coin-label {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--text-strong);
+}
+.fs-row-coin small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 500;
+}
+.fs-row-coin small span {
+  margin-left: 4px;
+  opacity: 0.7;
+}
+.fs-more {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 31px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 9px;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+.fs-more:hover {
+  background: var(--surface-2);
+}
+
+/* HiveOS dialogs: fields are #262b31 boxes with the grey label inside, blue (i) help marks. */
+.hive-dialog .ant-form-item,
+.hive-custom-dialog .ant-form-item {
+  background: var(--surface);
+  border-color: var(--border);
+  border-radius: var(--radius-sm);
+}
+.hive-dialog .ant-form-item-label > label,
+.hive-custom-dialog .ant-form-item-label > label {
+  color: var(--text-3);
+  font-size: 14px;
+  font-weight: 600;
+}
+.hive-custom-dialog .custom-info {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #0e3b58;
+  color: #2392dc;
+  font-size: 16px;
+}
+.hive-custom-dialog .custom-footer .ant-btn:first-child {
+  background: var(--surface-3);
+  border: 0;
+  font-weight: 600;
+}
+.hive-dialog .ant-modal-title,
+.hive-custom-dialog .ant-modal-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+.ant-btn-primary {
+  color: #121417;
+  font-weight: 700;
+}
+@media (max-width: 860px) {
+  .flight-card {
+    margin-left: 0;
+  }
+  .flight-card-row {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .fs-filters {
+    padding-left: 0;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+}
+
+/* Wallet dialog: HiveOS input boxes, label inside, no inner borders. */
+.hive-dialog .ant-form-item {
+  padding: 7px 10px 6px;
+  margin-bottom: 9px;
+}
+.hive-dialog .ant-form-item-label {
+  padding: 0 0 2px !important;
+}
+.hive-dialog .ant-input,
+.hive-dialog .ant-input-affix-wrapper,
+.hive-dialog .ant-select-selector,
+.hive-dialog textarea.ant-input {
+  border: 0 !important;
+  box-shadow: none !important;
+  padding-left: 0 !important;
+  font-size: 14px;
+}
+.hive-dialog .ant-select-selection-search {
+  inset-inline-start: 0 !important;
+}
+.hive-dialog .ant-form-item.locked .ant-form-item-label > label {
+  color: var(--border-strong);
+}
+.wallet-locked-coin {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  color: var(--text-3);
+}
+.hive-custom-dialog .ant-input-number {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.hive-custom-dialog .ant-input-number-input {
+  padding-left: 0;
+}
+
+/* HiveOS "矿机命令": prompt box with a 运行 button, then recent and common commands as links. */
+.cmd-dialog .ant-modal-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+.cmd-input {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+.cmd-input > span {
+  position: absolute;
+  margin: 9px 0 0 9px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 12px;
+  pointer-events: none;
+}
+.cmd-input .ant-input {
+  padding: 8px 10px 8px 30px;
+  background: var(--bg-elev);
+  border-color: var(--text-3);
+  border-radius: 2px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.cmd-run.ant-btn {
+  height: auto;
+  min-width: 52px;
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+  font-weight: 600;
+}
+.cmd-meta {
+  margin: 6px 0 16px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+.cmd-section h4 {
+  margin: 14px 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.cmd-pick {
+  display: block;
+  padding: 0;
+  margin: 0 0 7px;
+  border: 0;
+  background: none;
+  color: #4ea8de;
+  font-family: var(--mono);
+  font-size: 12px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  cursor: pointer;
+}
+.cmd-pick:hover {
+  color: var(--text-strong);
+}
+.cmd-common {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 4px;
+  font-size: 12px;
+  color: var(--text);
+}
+.cmd-common .cmd-pick {
+  display: inline;
+}
+.cmd-warn {
+  margin: 0 0 8px;
+  color: var(--accent);
+  font-size: 11px;
+}
+.cmd-more {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: 11px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* HiveOS flight sheet picker under the rocket icon. */
+.fs-picker .ant-popover-inner {
+  padding: 12px 14px;
+  background: var(--surface-3);
+  border-radius: 0;
+}
+.fs-picker-body {
+  width: 260px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.fs-picker-title {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.fs-picker-coins {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.fs-picker-coins button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 6px 0 3px;
+  border: 0;
+  border-radius: 2px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.fs-picker-coins button.active {
+  box-shadow: inset 0 -1px 0 var(--text-strong);
+}
+.fs-picker-sheet {
+  display: block;
+  width: 100%;
+  padding: 6px 4px;
+  border: 0;
+  border-top: 1px solid var(--border-strong);
+  background: none;
+  color: var(--text);
+  text-align: left;
+  font-size: 12px;
+  cursor: pointer;
+}
+.fs-picker-sheet:hover {
+  background: var(--surface-2);
+}
+.fs-picker-task {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+}
+.fs-picker-task small {
+  margin-left: auto;
+  color: var(--text-3);
+}
+
+.cmd-input {
+  position: relative;
+}
+.cmd-input > span {
+  z-index: 1;
+}
+
+/* Coin icon library dialog */
+.coin-icons-dialog code {
+  font-size: 12px;
+}
+.coin-icons-add {
+  width: 100%;
+  margin-bottom: 10px;
+}
+.coin-icon-list li {
+  grid-template-columns: 28px 80px 70px 1fr;
+}
+.coin-icon-list li > .ant-space {
+  justify-content: flex-end;
+}
+.coin-search-results {
+  margin-top: 12px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.coin-search-hit {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 6px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.coin-search-hit:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.coin-search-hit small {
+  display: block;
+  color: var(--text-3);
+  font-size: 11px;
+}
+.coin-search-hit em {
+  color: var(--text-3);
+  font-style: normal;
+}
+.coin-search-blank {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--surface-3);
+}
+
+/* One hashrate card for several coins. */
+.hive-stat-rates {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.hive-rate-line {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.hive-rate-line b {
+  color: var(--text);
+  font-weight: 600;
+}
+.hive-rate-line strong {
+  margin-left: auto;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 400;
+}
+.hive-rate-line small {
+  color: var(--text-3);
+  font-size: 11px;
+}
+.hive-rate-line.more {
+  color: var(--text-3);
+}
+.hive-stat > span > small {
+  margin-left: auto;
+}
+/* Offline rows: how long ago, not a row of dashes. */
+.hive-machine-uptime.offline {
+  color: var(--red);
+  font-weight: 600;
+}
+.hive-offline-note {
+  color: var(--text-3);
+  font-size: 12px;
+}
+/* Memory junction flagged next to the core temperature once it is hot. */
+.wk-temp-pair {
+  flex-direction: row;
+  justify-content: center;
+  gap: 6px;
+  align-items: baseline;
+}
+.wk-mem-hot {
+  padding: 0 4px;
+  border-radius: 2px;
+  background: var(--red-soft);
+  color: var(--red);
+  font-size: 11px;
+  font-style: normal;
+  white-space: nowrap;
 }
