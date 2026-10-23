@@ -86,6 +86,7 @@ async fn offline_hosts_and_transient_heartbeat_failure_do_not_interrupt_healthy_
     });
     let app = App {
         bios: None,
+        icons: None,
         repository: store.clone(),
         vault: vault.clone(),
         remote: Arc::new(SshExecutor::default()),

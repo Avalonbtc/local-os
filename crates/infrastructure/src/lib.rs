@@ -1,6 +1,7 @@
 pub mod adapters;
 pub mod bios;
 pub mod bmc;
+pub mod icons;
 pub mod pg;
 pub mod runtime;
 pub mod ssh;

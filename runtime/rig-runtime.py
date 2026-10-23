@@ -581,7 +581,7 @@ def watchdog_once():
                         start(name, preserve=True)
                 continue
             policy = effective_policy(cfg)
-            if policy.get("watchdog_enabled") is False:
+            if policy.get("watchdog_enabled") is False or policy.get("maintenance_mode") is True:
                 if s.get("bad_reason"):
                     update(name, bad_reason=None, bad_since=None)
                 continue
@@ -609,6 +609,79 @@ def watchdog_once():
                         subprocess.run(["systemctl", "reboot"], check=True)
         except Exception as error:
             print(f"watchdog {name}: {error}", file=sys.stderr, flush=True)
+
+
+THERMAL_FILE = "thermal.json"
+THERMAL_HYSTERESIS = 10
+THERMAL_ACTIONS = ("stop_miner", "reboot", "shutdown")
+
+
+def thermal_guard(system, now=None):
+    """HiveOS Autofan "critical temperature": act on the hottest CPU or GPU reading.
+
+    stop_miner pauses the running miners (desired stays "running") and resumes them once the
+    hottest reading is THERMAL_HYSTERESIS degrees below the limit, also after a reboot.
+    reboot / shutdown share the watchdog's persisted host-reboot rate limit.
+    """
+    now = time.time() if now is None else now
+    policy = read(ROOT / "policy.json").get("policy") or {}
+    limit = policy.get("critical_temp_c")
+    limit = limit if isinstance(limit, (int, float)) and not isinstance(limit, bool) and 40 <= limit <= 120 else None
+    action = policy.get("critical_action") if policy.get("critical_action") in THERMAL_ACTIONS else "stop_miner"
+    readings = [system.get("cpu_temperature")] + [g.get("temperature_c") for g in system.get("gpus") or []]
+    hottest = max((t for t in readings if isinstance(t, (int, float)) and not isinstance(t, bool)), default=None)
+    guard = read(ROOT / THERMAL_FILE)
+    paused = guard.get("paused") or []
+    if paused and (limit is None or (hottest is not None and hottest <= limit - THERMAL_HYSTERESIS)):
+        resumed = []
+        for name in paused:
+            s = state(name)
+            if s.get("desired") == "running" and s.get("maintenance") and s.get("phase") == "stopped":
+                try:
+                    start(name, preserve=True)
+                    resumed.append(name)
+                except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+                    print(f"thermal resume {name}: {error}", file=sys.stderr, flush=True)
+        atomic(ROOT / THERMAL_FILE, {"paused": [], "resumed_at": now})
+        if resumed:
+            emit("success", "thermal_resume", f"温度已降到 {hottest:.0f}°C，恢复矿工：{', '.join(resumed)}" if hottest is not None
+                 else f"已取消临界温度，恢复矿工：{', '.join(resumed)}")
+        return
+    if limit is None or hottest is None or hottest < limit:
+        return
+    if action == "stop_miner":
+        stopped = []
+        for directory in sorted((ROOT / "instances").glob("*")):
+            s = state(directory.name)
+            if s.get("desired") != "running" or s.get("maintenance") or s.get("switching") or directory.name in paused:
+                continue
+            stop(directory.name, desired="running", maintenance=True)
+            stopped.append(directory.name)
+        if stopped:
+            atomic(ROOT / THERMAL_FILE, {"paused": paused + stopped, "paused_at": now, "temperature": hottest})
+            emit("error", "thermal_stop", f"温度 {hottest:.0f}°C 达到临界 {limit:.0f}°C，已停止矿工：{', '.join(stopped)}")
+        return
+    reboot = read(ROOT / "last-reboot.json")
+    if now - reboot.get("at", 0) <= policy.get("host_reboot_cooldown_seconds", 3600):
+        return
+    atomic(ROOT / "last-reboot.json", {"at": now, "reason": "critical_temperature", "temperature": hottest})
+    verb = "重启" if action == "reboot" else "关机"
+    emit("error", "thermal_" + action, f"温度 {hottest:.0f}°C 达到临界 {limit:.0f}°C，{verb}")
+    subprocess.run(["systemctl", "reboot" if action == "reboot" else "poweroff"], check=True)
+
+
+def boot_start(delay=0):
+    """Start the miners that should run, after the HiveOS-style miner delay."""
+    if delay:
+        time.sleep(delay)
+    if (read(ROOT / "policy.json").get("policy") or {}).get("maintenance_mode") is True:
+        emit("warning", "maintenance_mode", "维护模式：开机不启动矿工")
+        return
+    paused = set(read(ROOT / THERMAL_FILE).get("paused") or [])
+    for path in (ROOT / "instances").glob("*"):
+        s = state(path.name)
+        if s.get("desired") == "running" and not s.get("maintenance") and s.get("phase") != "faulted" and path.name not in paused:
+            start(path.name, preserve=True)
 
 
 def cleanup_runtime(now=None):
@@ -2275,6 +2348,10 @@ def main():
                     print(f"snapshot not published: {error}", file=sys.stderr, flush=True)
                 if snapshot is not None:
                     try:
+                        thermal_guard(snapshot["system"])
+                    except Exception as error:  # noqa: BLE001 - never stop statistics over it
+                        print(f"thermal guard: {error}", file=sys.stderr, flush=True)
+                    try:
                         pusher.submit(snapshot)
                     except Exception as error:  # noqa: BLE001 - the controller falls back to SSH reads
                         print(f"push failed: {error}", file=sys.stderr, flush=True)
@@ -2294,10 +2371,18 @@ def main():
             # Detached so a HiveOS-style RUNNING_DELAY never holds up miner recovery.
             subprocess.Popen([sys.executable, SELF, "oc-reapply"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, start_new_session=True)
-        for path in (ROOT / "instances").glob("*"):
-            s = state(path.name)
-            if s.get("desired") == "running" and not s.get("maintenance") and s.get("phase") != "faulted":
-                start(path.name, preserve=True)
+        policy = read(ROOT / "policy.json").get("policy") or {}
+        delay = policy.get("miner_delay_seconds")
+        delay = max(0, min(int(delay), 3600)) if isinstance(delay, (int, float)) and not isinstance(delay, bool) else 0
+        if delay:
+            # Detached: a oneshot unit must not sit in the delay (and the watchdog starts after it).
+            emit("info", "miner_delay", f"矿工将在 {delay} 秒后启动")
+            subprocess.Popen([sys.executable, SELF, "boot-start", str(delay)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+        else:
+            boot_start()
+    elif cmd == "boot-start":
+        boot_start(int(params[0]) if params else 0)
     elif cmd == "oc-reapply":
         oc_reapply()
     elif cmd == "oc-status":

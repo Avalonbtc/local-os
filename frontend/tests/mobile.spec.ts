@@ -35,7 +35,7 @@ test("fleet list and worker page fit a phone screen", async ({ page }) => {
 
   await page.goto(`/machines/${id}`);
   await expect(page.getByRole("toolbar", { name: "矿机操作" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "矿工日志" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "挖矿软件动作" })).toBeVisible();
   // One CPU row for a dual-socket machine.
   const cpuRows = page.locator(".wk-dev-row.cpu");
   await expect(cpuRows).toHaveCount(1);

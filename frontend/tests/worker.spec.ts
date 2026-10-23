@@ -43,11 +43,11 @@ test("worker page shows the HiveOS layout for a CPU + GPU rig", async ({ page })
   });
   await page.goto(`/machines/${id}`);
   await expect(page.locator(".wk-band")).toContainText("test");
-  await expect(page.locator(".wk-band")).toContainText("LA 0.79 0.68 0.45");
-  await expect(page.locator(".wk-band")).toContainText("164W");
+  await expect(page.locator(".wk-la i")).toHaveText(["0.79", "0.68", "0.45"]);
+  await expect(page.locator(".wk-band .wk-power")).toContainText("164.00");
+  await expect(page.locator(".wk-band")).toContainText("RX 6600 XT × 1");
   await expect(page.locator(".wk-miner")).toContainText("teamredminer");
   await expect(page.locator(".wk-miner")).toContainText("72.33 MH/s");
-  await expect(page.locator(".wk-tile")).toHaveCount(3);
   await expect(page.locator(".wk-status")).toContainText("挖矿软件正常运行");
   // HiveOS chips: open shows the full message and output; × closes it on the server.
   await expect(page.locator(".wk-chip")).toContainText("执行命令：成功");
@@ -58,15 +58,21 @@ test("worker page shows the HiveOS layout for a CPU + GPU rig", async ({ page })
   await expect(page.locator(".wk-chip")).toHaveCount(0);
   expect(dismissed).toEqual([{ key: "job:1" }]);
   const rows = page.locator(".wk-dev-row:not(.head)");
-  await expect(rows).toHaveCount(3);
-  await expect(rows.nth(1)).toContainText("Radeon RX 6600 XT");
-  await expect(rows.nth(1)).toContainText("28.43 MH/s");
-  await expect(rows.nth(2)).toContainText("86°");
+  // A GPU rig with no CPU miner lists only its cards, like HiveOS.
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("Radeon RX 6600 XT");
+  await expect(rows.nth(0)).toContainText("28.43 MH/s");
+  // Core temperature on the row like HiveOS; the 86° memory junction only on hover (below 100°).
+  await expect(rows.nth(1)).not.toContainText("86°");
+  await rows.nth(1).locator(".wk-temp-pair").hover();
+  await expect(page.getByRole("tooltip")).toContainText("显存 86°");
+  await page.mouse.move(0, 0);
   await expect(page.locator(".wk-sys")).toContainText("剩余内存");
   // Toolbar icons like HiveOS; the miner log opens in a dialog.
-  await page.getByRole("button", { name: "矿工日志" }).click();
+  await page.getByRole("button", { name: "挖矿软件动作" }).click();
+  await page.getByRole("menuitem", { name: "挖矿软件日志" }).click();
   await expect(page.getByRole("dialog", { name: /矿工日志/ })).toContainText("speed 72.33 MH/s");
   await page.keyboard.press("Escape");
-  for (const tab of ["概述", "飞行表", "统计", "活动", "设定"])
+  for (const tab of ["概述", "飞行表", "超频", "Autofan", "统计", "活动", "设定"])
     await expect(page.getByRole("tab", { name: tab })).toBeVisible();
 });

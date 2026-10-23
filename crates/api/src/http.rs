@@ -80,6 +80,12 @@ pub fn router(state: ApiState, static_dir: &str) -> Router {
             "/catalog/{kind}/{id}",
             put(catalog_update).delete(catalog_delete),
         )
+        .route("/coin-icons", get(coin_icons))
+        .route("/coin-icons/search", get(coin_search))
+        .route(
+            "/coin-icons/{symbol}",
+            get(coin_icon).put(coin_icon_save).delete(coin_icon_delete),
+        )
         .route("/adapters", get(adapters))
         .route(
             "/packages",
@@ -479,6 +485,8 @@ async fn telemetry(
 struct HistoryQuery {
     kind: String,
     hours: Option<u32>,
+    /// End of the window (RFC 3339); defaults to now.
+    until: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(default)]
     summary: bool,
 }
@@ -489,10 +497,12 @@ async fn history(
 ) -> ApiResult<Json<Vec<Observation>>> {
     Ok(Json(if q.summary {
         s.app
-            .history_summary(id, &q.kind, q.hours.unwrap_or(6))
+            .history_summary(id, &q.kind, q.hours.unwrap_or(6), q.until)
             .await?
     } else {
-        s.app.history(id, &q.kind, q.hours.unwrap_or(6)).await?
+        s.app
+            .history(id, &q.kind, q.hours.unwrap_or(6), q.until)
+            .await?
     }))
 }
 #[derive(Deserialize)]
@@ -553,6 +563,57 @@ async fn farm_settings_update(
     Json(input): Json<FarmSettings>,
 ) -> ApiResult<Json<FarmSettings>> {
     Ok(Json(s.app.save_farm_settings(&session.actor, input).await?))
+}
+async fn coin_icons(State(s): State<ApiState>) -> ApiResult<Json<CoinIconList>> {
+    Ok(Json(s.app.coin_icons().await?))
+}
+#[derive(Deserialize)]
+struct CoinSearchQuery {
+    q: String,
+}
+async fn coin_search(
+    State(s): State<ApiState>,
+    Query(q): Query<CoinSearchQuery>,
+) -> ApiResult<Json<Vec<CoinCandidate>>> {
+    Ok(Json(s.app.search_coins(&q.q).await?))
+}
+/// The image itself. SVG is served with a sandboxing CSP so opening it directly cannot run script.
+async fn coin_icon(State(s): State<ApiState>, Path(symbol): Path<String>) -> ApiResult<Response> {
+    let (icon, bytes) = s.app.coin_icon(&symbol).await?;
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, icon.content_type),
+            (
+                axum::http::header::CACHE_CONTROL,
+                "private, max-age=300".into(),
+            ),
+            (
+                axum::http::header::CONTENT_SECURITY_POLICY,
+                "default-src 'none'; style-src 'unsafe-inline'; sandbox".into(),
+            ),
+            (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff".into()),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+async fn coin_icon_save(
+    State(s): State<ApiState>,
+    Extension(session): Extension<Session>,
+    Path(symbol): Path<String>,
+    Json(input): Json<CoinIconInput>,
+) -> ApiResult<Json<CoinIcon>> {
+    Ok(Json(
+        s.app.save_coin_icon(&session.actor, &symbol, input).await?,
+    ))
+}
+async fn coin_icon_delete(
+    State(s): State<ApiState>,
+    Extension(session): Extension<Session>,
+    Path(symbol): Path<String>,
+) -> ApiResult<StatusCode> {
+    s.app.delete_coin_icon(&session.actor, &symbol).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 async fn adapters(State(s): State<ApiState>) -> Json<Vec<AdapterDescription>> {
     Json(s.app.adapter_descriptions())

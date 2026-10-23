@@ -32,6 +32,7 @@ import {
   SyncOutlined,
 } from "@ant-design/icons";
 import { client, setCsrf, unwrap, useMachines } from "./shared/api";
+import { setSelection, useSelection } from "./shared/selection";
 import { Login } from "./features/identity";
 import { FleetPage, FleetSummary, FleetDataCache, MachineDetail } from "./features/fleet";
 import "./styles.css";
@@ -92,6 +93,8 @@ function TopBar({ username, logout }: { username: string; logout: () => void }) 
   const location = useLocation();
   const navigate = useNavigate();
   const worker = /^\/machines\/([0-9a-f-]{36})/.exec(location.pathname)?.[1];
+  const selected = useSelection();
+  const bulk = location.pathname === "/machines" && selected.length > 0;
   return (
     <header className="rd-top">
       <div className="rd-top-inner">
@@ -100,21 +103,32 @@ function TopBar({ username, logout }: { username: string; logout: () => void }) 
             <span className="hive-brand-mark" aria-hidden="true"><i /><i /><i /></span>
             RigDeck
           </Link>
-          <span className="rd-dot">·</span>
-          <Dropdown
-            trigger={["click"]}
-            menu={{
-              items: farmTabs.map(([path, label]) => ({ key: path, label })),
-              onClick: ({ key }) => navigate(key),
-            }}
-          >
-            <button className="rd-crumb-button">
-              我的矿场 <DownOutlined />
+          {bulk ? (
+            // HiveOS: while workers are ticked the crumb becomes "‹ 取消选定 N 矿机".
+            <button className="rd-crumb-button rd-unselect" onClick={() => setSelection([])}>
+              ‹ 取消选定 <b>{selected.length} 矿机</b>
             </button>
-          </Dropdown>
-          <span className="rd-dot">·</span>
-          <WorkerPicker current={worker} />
+          ) : (
+            <>
+              <span className="rd-dot">·</span>
+              <Dropdown
+                trigger={["click"]}
+                menu={{
+                  items: farmTabs.map(([path, label]) => ({ key: path, label })),
+                  onClick: ({ key }) => navigate(key),
+                }}
+              >
+                <button className="rd-crumb-button">
+                  我的矿场 <DownOutlined />
+                </button>
+              </Dropdown>
+              <span className="rd-dot">·</span>
+              <WorkerPicker current={worker} />
+            </>
+          )}
         </nav>
+        {/* The worker page portals its HiveOS action icons here. */}
+        <div id="rd-top-tools" className="rd-top-tools" />
         <div className="rd-top-actions">
           <Tooltip title="飞行表">
             <Link to="/flight-sheets" aria-label="飞行表"><RocketOutlined /></Link>
@@ -261,41 +275,43 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ConfigProvider
       locale={zhCN}
+      // HiveOS never spaces out two-character button labels ("取消", "文件").
+      button={{ autoInsertSpace: false }}
       theme={{
         algorithm: theme.darkAlgorithm,
         token: {
-          colorPrimary: "#f5a524",
-          colorInfo: "#52a8e8",
-          colorSuccess: "#7cc242",
+          colorPrimary: "#ffae00",
+          colorInfo: "#7bbeea",
+          colorSuccess: "#84bf40",
           colorWarning: "#f5c945",
-          colorError: "#f0555f",
-          colorLink: "#f5a524",
-          colorBgBase: "#13161a",
-          colorBgContainer: "#1f2429",
-          colorBgElevated: "#262c32",
-          colorBgLayout: "#13161a",
-          colorBorder: "#353c44",
-          colorBorderSecondary: "#2b3138",
-          colorText: "#e7eaee",
-          colorTextSecondary: "#aeb7c2",
-          colorTextTertiary: "#7d8894",
-          borderRadius: 6,
-          borderRadiusLG: 10,
+          colorError: "#ff3733",
+          colorLink: "#ffae00",
+          colorBgBase: "#22262b",
+          colorBgContainer: "#262b31",
+          colorBgElevated: "#2f353c",
+          colorBgLayout: "#22262b",
+          colorBorder: "#4a535d",
+          colorBorderSecondary: "#363d45",
+          colorText: "#c6ccd2",
+          colorTextSecondary: "#9ba5b1",
+          colorTextTertiary: "#818e9c",
+          borderRadius: 3,
+          borderRadiusLG: 4,
           controlHeight: 32,
           fontFamily:
-            "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif",
-          fontSize: 13,
+            "'Open Sans', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif",
+          fontSize: 14,
         },
         components: {
           Table: {
-            headerBg: "#191d22",
-            rowHoverBg: "#262c32",
+            headerBg: "#22262b",
+            rowHoverBg: "#2f353c",
             cellPaddingBlock: 10,
           },
           Button: { primaryColor: "#1a1405", primaryShadow: "none", defaultShadow: "none" },
-          Modal: { contentBg: "#1f2429", headerBg: "#1f2429" },
-          Tabs: { itemColor: "#aeb7c2" },
-          Segmented: { itemSelectedBg: "#2f363d", trackBg: "#1f2429" },
+          Modal: { contentBg: "#363d45", headerBg: "#363d45" },
+          Tabs: { itemColor: "#9ba5b1" },
+          Segmented: { itemSelectedBg: "#363d45", trackBg: "#262b31" },
         },
       }}
     >

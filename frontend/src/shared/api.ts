@@ -18,6 +18,10 @@ export type AuditEvent = components["schemas"]["AuditEvent"];
 export type MachineMessage = components["schemas"]["MachineMessage"];
 export type MinerLog = components["schemas"]["MinerLog"];
 export type FarmSettings = components["schemas"]["FarmSettings"];
+export type CoinIcon = components["schemas"]["CoinIcon"];
+export type CoinIconList = components["schemas"]["CoinIconList"];
+export type CoinIconInput = components["schemas"]["CoinIconInput"];
+export type CoinCandidate = components["schemas"]["CoinCandidate"];
 export type Data = Record<string, any>;
 
 let csrf = "";
@@ -202,26 +206,41 @@ export function measuredPower(
 const watt = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 /** Software power: CPU packages (RAPL) plus each GPU's own reading, like HiveOS's worker power. */
-export function machinePower(system: Observation | undefined) {
+/**
+ * Measured CPU + GPU watts. Like HiveOS, a worker's "hardware power" (fans, board, memory) is added
+ * and the sum divided by the PSU efficiency when those settings are present in its policy.
+ */
+export function machinePower(system: Observation | undefined, policy?: unknown) {
   const d = data(system?.data);
+  const p = data(policy);
   const fresh = isFresh(system);
   const cpu = fresh ? watt(d.cpu_power_w) : undefined;
   const gpuReadings: number[] = fresh
     ? (Array.isArray(d.gpus) ? d.gpus : []).map((g: Data) => watt(g.power_w)).filter((w: number | undefined): w is number => w !== undefined)
     : [];
   const gpu = gpuReadings.length ? gpuReadings.reduce((a, b) => a + b, 0) : undefined;
-  const watts = cpu === undefined && gpu === undefined ? undefined : (cpu ?? 0) + (gpu ?? 0);
-  const label = gpu === undefined ? "CPU 功耗" : cpu === undefined ? "GPU 功耗" : "CPU+GPU 功耗";
+  const measured = cpu === undefined && gpu === undefined ? undefined : (cpu ?? 0) + (gpu ?? 0);
+  const hardware = typeof p.hardware_power_w === "number" && p.hardware_power_w > 0 ? p.hardware_power_w : 0;
+  const efficiency =
+    typeof p.psu_efficiency_pct === "number" && p.psu_efficiency_pct >= 50 && p.psu_efficiency_pct <= 100
+      ? p.psu_efficiency_pct
+      : 100;
+  const adjusted = hardware > 0 || efficiency < 100;
+  const watts = measured === undefined ? undefined : (measured + hardware) / (efficiency / 100);
+  const label = adjusted ? "估算墙插功耗" : gpu === undefined ? "CPU 功耗" : cpu === undefined ? "GPU 功耗" : "CPU+GPU 功耗";
   const parts = [
     cpu !== undefined && `CPU ${Math.round(cpu)} W（RAPL）`,
     gpu !== undefined && `GPU ${Math.round(gpu)} W（${gpuReadings.length} 块显卡读数）`,
+    hardware > 0 && `硬件 ${Math.round(hardware)} W（设定）`,
   ].filter(Boolean);
   return {
     watts,
     cpu,
     gpu,
     label,
-    source: `${parts.join(" + ") || "未采集"}；软件读数，不含内存、风扇及电源损耗`,
+    source: `${parts.join(" + ") || "未采集"}${efficiency < 100 ? `，÷ 电源效率 ${efficiency}%` : ""}；${
+      adjusted ? "硬件功耗与电源效率为人工设定" : "软件读数，不含内存、风扇及电源损耗"
+    }`,
   };
 }
 export async function submitJob(

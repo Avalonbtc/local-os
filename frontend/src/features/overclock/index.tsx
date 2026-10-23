@@ -483,3 +483,7 @@ export function OverclockPage() {
     </>
   );
 }
+
+// Used by the fleet bulk bar to describe a template.
+export { summary };
+export type { OcConfig };
