@@ -509,5 +509,116 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(calls, [("start", "cpu1")])
 
 
+    def failover_config(self):
+        argv = lambda url: ["cpuminer", "-a", "yespower", "-o", url, "-u", "w", "-p", "x"]
+        return {"adapter": "cpuminer-opt", "api_port": 4048, "pool_urls": ["stratum+tcp://main:1", "stratum+tcp://backup:2", "stratum+tcp://third:3"],
+                "argv": argv("stratum+tcp://main:1"), "failover_argv": [argv("stratum+tcp://main:1"), argv("stratum+tcp://backup:2"), argv("stratum+tcp://third:3")]}
+
+    def test_pool_failover_moves_to_the_next_reachable_pool(self):
+        cfg = self.failover_config()
+        self.rt.update("cpu1", pool_index=0)
+        up = {"stratum+tcp://main:1": False, "stratum+tcp://backup:2": False, "stratum+tcp://third:3": True}
+        with patch.object(self.rt, "pool_reachable", side_effect=lambda url, timeout=3: up[url]):
+            # Main pool down, backup also down: the third pool is the first that answers.
+            self.assertEqual(self.rt.pool_failover("cpu1", cfg, self.rt.state("cpu1"), "low_hashrate"), "stratum+tcp://third:3")
+            self.assertEqual(self.rt.state("cpu1")["pool_index"], 2)
+            self.assertEqual(self.rt.configured_pool(cfg, self.rt.state("cpu1")), "stratum+tcp://third:3")
+            # A reachable pool with low hashrate is a miner problem: stay.
+            self.assertIsNone(self.rt.pool_failover("cpu1", cfg, self.rt.state("cpu1"), "low_hashrate"))
+            # The miner itself says the pool is gone: move on even if the port answers (wraps around).
+            up["stratum+tcp://main:1"] = True
+            self.assertEqual(self.rt.pool_failover("cpu1", cfg, self.rt.state("cpu1"), "pool_disconnected"), "stratum+tcp://main:1")
+            # Nothing answers: still try the next pool in order rather than restarting on a dead one.
+            up.update(dict.fromkeys(up, False))
+            self.assertEqual(self.rt.pool_failover("cpu1", cfg, self.rt.state("cpu1"), "stats_invalid"), "stratum+tcp://backup:2")
+            self.assertIsNone(self.rt.pool_failover("cpu1", cfg, self.rt.state("cpu1"), "supervisor_missing"))
+
+    def test_pool_failover_is_only_for_miners_without_their_own(self):
+        cfg = self.failover_config()
+        single = {**cfg, "failover_argv": cfg["failover_argv"][:1]}
+        xmrig = {k: v for k, v in cfg.items() if k != "failover_argv"}
+        with patch.object(self.rt, "pool_reachable", return_value=False) as probe:
+            self.assertIsNone(self.rt.pool_failover("cpu1", single, {}, "pool_disconnected"))
+            self.assertIsNone(self.rt.pool_failover("cpu1", xmrig, {}, "pool_disconnected"))
+        probe.assert_not_called()
+        self.assertEqual(self.rt.configured_pool(xmrig, {"pool_index": 2}), "stratum+tcp://main:1")
+
+    def test_main_pool_is_rechecked_and_taken_back(self):
+        cfg = self.failover_config()
+        self.rt.update("cpu1", pool_index=1, pool_checked_at=1000)
+        with patch.object(self.rt, "pool_reachable", return_value=True) as probe:
+            # Too soon after the switch: no probe at all.
+            self.assertFalse(self.rt.main_pool_back("cpu1", cfg, self.rt.state("cpu1"), 1000 + 60))
+            probe.assert_not_called()
+            self.assertTrue(self.rt.main_pool_back("cpu1", cfg, self.rt.state("cpu1"), 1000 + self.rt.MAIN_POOL_RECHECK_SECONDS))
+        self.assertEqual(self.rt.state("cpu1")["pool_index"], 0)
+        self.rt.update("cpu1", pool_index=1, pool_checked_at=0)
+        with patch.object(self.rt, "pool_reachable", return_value=False):
+            self.assertFalse(self.rt.main_pool_back("cpu1", cfg, self.rt.state("cpu1"), 5000))
+        self.assertEqual(self.rt.state("cpu1")["pool_index"], 1)
+        self.assertEqual(self.rt.state("cpu1")["pool_checked_at"], 5000, "next probe waits another interval")
+
+    def test_pool_reachable_probes_the_port(self):
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        port = server.getsockname()[1]
+        try:
+            self.assertTrue(self.rt.pool_reachable(f"stratum+tcp://127.0.0.1:{port}", timeout=1))
+            self.assertTrue(self.rt.pool_reachable(f"127.0.0.1:{port}", timeout=1))
+        finally:
+            server.close()
+        self.assertFalse(self.rt.pool_reachable(f"stratum+tcp://127.0.0.1:{port}", timeout=1))
+        self.assertFalse(self.rt.pool_reachable("stratum+tcp://no-port-here", timeout=1))
+
+    def test_native_runs_the_command_line_of_the_current_pool(self):
+        cfg = self.failover_config()
+        executed = []
+        self.rt.update("cpu1", pool_index=1)
+        with patch.object(self.rt, "current_config", return_value=cfg), \
+                patch.object(self.rt, "version_dir", return_value=Path(self.temp.name)), \
+                patch.object(self.rt.os, "chdir"), \
+                patch.object(self.rt.os, "execv", side_effect=lambda path, argv: executed.append(argv)):
+            (Path(self.temp.name) / "package").mkdir(exist_ok=True)
+            self.rt.native("cpu1", "run")
+        self.assertEqual(executed[0][4], "stratum+tcp://backup:2")
+
+    def test_watchdog_switches_to_backup_pool_and_back(self):
+        cfg = self.failover_config()
+        (self.rt.ROOT / "instances" / "cpu1").mkdir(parents=True, exist_ok=True)
+        now = time.time()
+        self.rt.update("cpu1", desired="running", phase="running", warm_until=0, last_restart_at=0, pool_index=0,
+                       bad_reason="low_hashrate", bad_since=now - 300)
+        restarts = []
+        up = {"stratum+tcp://main:1": False, "stratum+tcp://backup:2": True, "stratum+tcp://third:3": True}
+        with patch.object(self.rt, "sample", return_value={"process_alive": True, "stats": {"hashrate_hs": 0}}), \
+                patch.object(self.rt, "current_config", return_value=cfg), \
+                patch.object(self.rt, "owned", return_value=True), \
+                patch.object(self.rt, "budget", return_value=True), \
+                patch.object(self.rt, "restart", side_effect=lambda name, reason: restarts.append(reason)), \
+                patch.object(self.rt, "pool_reachable", side_effect=lambda url, timeout=3: up[url]):
+            self.rt.watchdog_once()
+            self.assertEqual(restarts, ["low_hashrate"])
+            self.assertEqual(self.rt.state("cpu1")["pool_index"], 1)
+            failover = [e for e in self.rt.recent_events() if e["kind"] == "pool_failover"]
+            self.assertIn("stratum+tcp://main:1", failover[-1]["message"])
+            self.assertIn("stratum+tcp://backup:2", failover[-1]["message"])
+            # Ten minutes later the main pool answers again: back to it.
+            up["stratum+tcp://main:1"] = True
+            self.rt.update("cpu1", pool_checked_at=time.time() - self.rt.MAIN_POOL_RECHECK_SECONDS, bad_reason=None, bad_since=None)
+            with patch.object(self.rt, "sample", return_value={"process_alive": True, "stats": {"hashrate_hs": 50}}):
+                self.rt.watchdog_once()
+            self.assertEqual(restarts, ["low_hashrate", "main_pool_back"])
+            self.assertEqual(self.rt.state("cpu1")["pool_index"], 0)
+            self.assertTrue(any(e["kind"] == "pool_failback" for e in self.rt.recent_events()))
+
+    def test_miner_reported_pool_is_kept(self):
+        xmrig = self.rt.normalize({"adapter": "xmrig"}, {"hashrate": {"total": [100]}, "connection": {"pool": "backup:2", "uptime": 30}})
+        self.assertEqual(xmrig["pool"], "backup:2")
+        srb = self.rt.normalize({"adapter": "srbminer", "algorithm": "randomx"},
+                                {"algorithms": [{"name": "randomx", "hashrate": {"now": 5}, "pool": {"pool": "backup:2", "connected": True}}]})
+        self.assertEqual(srb["pool"], "backup:2")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

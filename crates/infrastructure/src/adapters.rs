@@ -76,11 +76,20 @@ fn expand(template: &str, values: &HashMap<&str, String>) -> String {
     }
     out
 }
+/// One pool of a task, in flight-sheet order (the first is the main pool, the rest are backups),
+/// with the wallet template and password expanded for that pool's address.
+struct PoolLogin {
+    url: String,
+    wallet: String,
+    password: String,
+}
 struct Context {
     base: Value,
     wallet: String,
     url: String,
     password: String,
+    /// Every pool of the task; `url` / `wallet` / `password` are the first one's.
+    pools: Vec<PoolLogin>,
     algorithm: String,
     extra: Vec<String>,
 }
@@ -134,24 +143,42 @@ fn context(
     }
     let address = wallet.data["address"].as_str().unwrap_or("");
     let coin_symbol = coin.data["symbol"].as_str().unwrap_or("");
-    let without_scheme = url.split("://").last().unwrap_or(&url);
-    let (host, port) = without_scheme
-        .rsplit_once(':')
-        .unwrap_or((without_scheme, ""));
-    let variables = HashMap::from([
-        ("%WAL%", address.into()),
-        ("%WORKER_NAME%", machine.name.clone()),
-        ("%COIN%", coin_symbol.into()),
-        ("%URL%", url.clone()),
-        ("%POOL%", url.clone()),
-        ("%URL_HOST%", host.into()),
-        ("%URL_PORT%", port.into()),
-    ]);
-    let wallet = expand(
-        value(task, miner, "wallet_template", "%WAL%.%WORKER_NAME%"),
-        &variables,
-    );
-    let password = expand(value(task, miner, "password", "x"), &variables);
+    let variables_for = |url: &str| {
+        let without_scheme = url.split("://").last().unwrap_or(url);
+        let (host, port) = without_scheme
+            .rsplit_once(':')
+            .unwrap_or((without_scheme, ""));
+        HashMap::from([
+            ("%WAL%", address.to_string()),
+            ("%WORKER_NAME%", machine.name.clone()),
+            ("%COIN%", coin_symbol.to_string()),
+            ("%URL%", url.to_string()),
+            ("%POOL%", url.to_string()),
+            ("%URL_HOST%", host.to_string()),
+            ("%URL_PORT%", port.to_string()),
+        ])
+    };
+    let login = |url: &str| {
+        let variables = variables_for(url);
+        PoolLogin {
+            url: url.to_string(),
+            wallet: expand(
+                value(task, miner, "wallet_template", "%WAL%.%WORKER_NAME%"),
+                &variables,
+            ),
+            password: expand(value(task, miner, "password", "x"), &variables),
+        }
+    };
+    let mut pools: Vec<PoolLogin> = urls
+        .as_array()
+        .map(|a| a.iter().filter_map(Value::as_str).map(&login).collect())
+        .unwrap_or_default();
+    if pools.is_empty() {
+        pools.push(login(&url));
+    }
+    let variables = variables_for(&url);
+    let wallet = pools[0].wallet.clone();
+    let password = pools[0].password.clone();
     let algorithm = value(task, miner, "algorithm", "").to_owned();
     if algorithm.is_empty() && miner.data["adapter"] != "hive-custom" {
         return Err(Error::Validation("请为矿工任务填写算法".into()));
@@ -191,6 +218,7 @@ fn context(
         wallet,
         url,
         password,
+        pools,
         algorithm,
         extra,
     })
@@ -227,21 +255,25 @@ impl MinerAdapter for Xmrig {
         host: &Machine,
     ) -> Result<Value> {
         let mut x = context(m, t, w, c, p, host)?;
-        let mut args = vec![
-            executable(m)?,
-            "--algo".into(),
-            x.algorithm,
-            "--url".into(),
-            x.url,
-            "--user".into(),
-            x.wallet,
-            "--pass".into(),
-            x.password,
+        let mut args = vec![executable(m)?, "--algo".into(), x.algorithm];
+        // Each --url starts a new pool and --user / --pass apply to it: XMRig fails over to the
+        // next pool after its retries and returns to the first one once it is back.
+        for pool in &x.pools {
+            args.extend([
+                "--url".into(),
+                pool.url.clone(),
+                "--user".into(),
+                pool.wallet.clone(),
+                "--pass".into(),
+                pool.password.clone(),
+            ]);
+        }
+        args.extend([
             "--http-enabled".into(),
             "--http-host=127.0.0.1".into(),
             "--http-port=%API_PORT%".into(),
             "--no-color".into(),
-        ];
+        ]);
         append_threads(&mut args, t, "--threads");
         args.extend(x.extra);
         x.base["argv"] = json!(args);
@@ -266,16 +298,39 @@ impl MinerAdapter for SrbMiner {
         host: &Machine,
     ) -> Result<Value> {
         let mut x = context(m, t, w, c, p, host)?;
+        // One algorithm with failover pools: pools and wallets are separated with ',', passwords
+        // with '!' (';' separates algorithms; '#!' and '#;' escape them in a password).
+        let (pool, wallet, password) = if x.pools.len() > 1 {
+            (
+                x.pools
+                    .iter()
+                    .map(|p| p.url.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+                x.pools
+                    .iter()
+                    .map(|p| p.wallet.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+                x.pools
+                    .iter()
+                    .map(|p| p.password.replace(';', "#;").replace('!', "#!"))
+                    .collect::<Vec<_>>()
+                    .join("!"),
+            )
+        } else {
+            (x.url, x.wallet, x.password)
+        };
         let mut args = vec![
             executable(m)?,
             "--algorithm".into(),
             x.algorithm,
             "--pool".into(),
-            x.url,
+            pool,
             "--wallet".into(),
-            x.wallet,
+            wallet,
             "--password".into(),
-            x.password,
+            password,
             "--api-enable".into(),
             "--api-port".into(),
             "%API_PORT%".into(),
@@ -302,21 +357,31 @@ impl MinerAdapter for CpuMiner {
         host: &Machine,
     ) -> Result<Value> {
         let mut x = context(m, t, w, c, p, host)?;
-        let mut args = vec![
-            executable(m)?,
-            "-a".into(),
-            x.algorithm,
-            "-o".into(),
-            x.url,
-            "-u".into(),
-            x.wallet,
-            "-p".into(),
-            x.password,
-            "--api-bind=127.0.0.1:%API_PORT%".into(),
-        ];
-        append_threads(&mut args, t, "-t");
-        args.extend(x.extra);
-        x.base["argv"] = json!(args);
+        let executable = executable(m)?;
+        let argv = |pool: &PoolLogin| {
+            let mut args = vec![
+                executable.clone(),
+                "-a".into(),
+                x.algorithm.clone(),
+                "-o".into(),
+                pool.url.clone(),
+                "-u".into(),
+                pool.wallet.clone(),
+                "-p".into(),
+                pool.password.clone(),
+                "--api-bind=127.0.0.1:%API_PORT%".into(),
+            ];
+            append_threads(&mut args, t, "-t");
+            args.extend(x.extra.iter().cloned());
+            args
+        };
+        // cpuminer-opt takes a single -o and never switches pools, so the rig runtime does:
+        // `failover_argv` holds the command line for each pool, `argv` stays the main pool's
+        // (a runtime without failover support keeps mining on it, as before).
+        x.base["argv"] = json!(argv(&x.pools[0]));
+        if x.pools.len() > 1 {
+            x.base["failover_argv"] = json!(x.pools.iter().map(argv).collect::<Vec<_>>());
+        }
         Ok(x.base)
     }
 }
@@ -428,6 +493,94 @@ mod tests {
         );
         assert!(mirror["package_version"].is_null());
         assert_eq!(mirror["environment"]["CUSTOM_VERSION"], "custom");
+    }
+    fn render_with_pools(adapter: &dyn MinerAdapter, data: Value) -> Value {
+        let id = uuid::Uuid::nil();
+        let item = |kind, data| CatalogItem {
+            id,
+            kind,
+            name: "x".into(),
+            data,
+            revision: 1,
+        };
+        let wallet = item(CatalogKind::Wallet, json!({"address":"wallet1"}));
+        let coin = item(CatalogKind::Coin, json!({"symbol":"XMR"}));
+        let host: Machine = serde_json::from_value(json!({"id":id,"name":"worker1","host":"127.0.0.1","port":22,"username":"test","host_key":"test","group":"","tags":[],"is_controller":false,"bmc":null,"policy":{},"created_at":"2026-01-01T00:00:00Z"})).unwrap();
+        let miner = item(CatalogKind::Miner, data);
+        let task = FlightTask {
+            instance: "cpu-1".into(),
+            wallet_id: id,
+            miner: miner.data.clone(),
+            config: json!({"algorithm":"rx/0","password":"x;d=%URL_PORT%!","urls":["stratum+tcp://main:3333","stratum+tcp://backup:4444"]}),
+        };
+        adapter
+            .render(&miner, &task, &wallet, &coin, None, &host)
+            .unwrap()
+    }
+    fn args(rendered: &Value) -> Vec<&str> {
+        rendered["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect()
+    }
+    #[test]
+    fn xmrig_gets_every_pool_in_order() {
+        let r = render_with_pools(
+            &Xmrig,
+            json!({"adapter":"xmrig","version":"custom","url":"https://x/x.tar.gz","executable":"xmrig"}),
+        );
+        let argv = args(&r);
+        let urls: Vec<_> = argv
+            .windows(6)
+            .filter(|w| w[0] == "--url")
+            .map(|w| (w[1], w[3], w[5]))
+            .collect();
+        assert_eq!(
+            urls,
+            [
+                ("stratum+tcp://main:3333", "wallet1.worker1", "x;d=3333!"),
+                ("stratum+tcp://backup:4444", "wallet1.worker1", "x;d=4444!"),
+            ]
+        );
+        assert!(r["failover_argv"].is_null(), "XMRig fails over by itself");
+    }
+    #[test]
+    fn srbminer_gets_failover_pools_in_its_separators() {
+        let r = render_with_pools(
+            &SrbMiner,
+            json!({"adapter":"srbminer","version":"custom","url":"https://x/s.tar.gz","executable":"SRBMiner-MULTI"}),
+        );
+        let argv = args(&r);
+        let after = |flag: &str| argv[argv.iter().position(|a| *a == flag).unwrap() + 1];
+        assert_eq!(
+            after("--pool"),
+            "stratum+tcp://main:3333,stratum+tcp://backup:4444"
+        );
+        assert_eq!(after("--wallet"), "wallet1.worker1,wallet1.worker1");
+        assert_eq!(after("--password"), "x#;d=3333#!!x#;d=4444#!");
+    }
+    #[test]
+    fn cpuminer_keeps_the_main_pool_and_lists_one_command_per_pool() {
+        let r = render_with_pools(
+            &CpuMiner,
+            json!({"adapter":"cpuminer-opt","version":"custom","url":"https://x/c.tar.gz","executable":"cpuminer"}),
+        );
+        let argv = args(&r);
+        assert_eq!(
+            argv[argv.iter().position(|a| *a == "-o").unwrap() + 1],
+            "stratum+tcp://main:3333"
+        );
+        let failover = r["failover_argv"].as_array().unwrap();
+        assert_eq!(failover.len(), 2);
+        assert_eq!(failover[0], r["argv"]);
+        assert_eq!(failover[1][4], "stratum+tcp://backup:4444");
+        assert_eq!(failover[1][8], "x;d=4444!");
+        assert_eq!(
+            r["pool_urls"],
+            json!(["stratum+tcp://main:3333", "stratum+tcp://backup:4444"])
+        );
     }
     #[test]
     fn replace_literal_values_without_shell_interpolation() {
