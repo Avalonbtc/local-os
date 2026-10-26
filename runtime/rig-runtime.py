@@ -32,7 +32,7 @@ import urllib.request
 import uuid
 import zlib
 
-VERSION = "0.4.1"
+VERSION = "0.4.2"
 ROOT = Path(os.environ.get("RIG_RUNTIME_ROOT", "/var/lib/rigdeck"))
 # Controller reads this with a plain `cat` (no Python start-up, no sudo). /run is tmpfs.
 SNAPSHOT_DIR = Path(os.environ.get("RIG_SNAPSHOT_DIR", "/run/rigdeck"))
@@ -250,7 +250,8 @@ def start(name, version=None, preserve=False):
         (directory / "STOP").unlink(missing_ok=True)
         update(name, desired="running", version=version, maintenance=False,
                phase="starting", warm_until=time.time() + config.get("warmup_seconds", 60),
-               restarts=old.get("restarts", []) if preserve else [], last_error=None)
+               restarts=old.get("restarts", []) if preserve else [], last_error=None,
+               pool_index=old.get("pool_index", 0) if preserve and old.get("version") == version else 0)
         log = directory / "console.log"
         subprocess.run(["screen", "-dmS", session(name), "-t", "miner", "-L", "-Logfile", str(log), sys.executable, SELF, "supervise", name], check=True, timeout=10)
 
@@ -411,6 +412,9 @@ def native(name, action):
     config = current_config(name)
     if action == "run":
         command = config["argv"]
+        # Miners without their own failover get one command line per pool (see pool_failover).
+        if runtime_failover(config):
+            command = config["failover_argv"][state(name).get("pool_index", 0) % len(config["failover_argv"])]
         executable = (version_dir(name) / "package" / command[0]).resolve()
         if not executable.is_relative_to((version_dir(name) / "package").resolve()):
             raise ValueError("Executable escapes package")
@@ -476,7 +480,8 @@ def normalize(config, raw):
         rate = (raw.get("hashrate", {}).get("total") or [None])[0]
         results = raw.get("results", {})
         connection = raw.get("connection", {})
-        base.update(hashrate_hs=rate, algorithm=raw.get("algo"), version=raw.get("version"), uptime=raw.get("uptime"), accepted=results.get("shares_good"), rejected=(results.get("shares_total", 0) - results.get("shares_good", 0)), connected=bool(connection.get("pool")) and connection.get("uptime", 0) > 0)
+        base.update(hashrate_hs=rate, algorithm=raw.get("algo"), version=raw.get("version"), uptime=raw.get("uptime"), accepted=results.get("shares_good"), rejected=(results.get("shares_total", 0) - results.get("shares_good", 0)), connected=bool(connection.get("pool")) and connection.get("uptime", 0) > 0,
+                    pool=connection.get("pool") if isinstance(connection.get("pool"), str) and connection.get("pool") else None)
     elif adapter == "srbminer":
         algorithms = raw.get("algorithms", [])
         match = next((x for x in algorithms if algorithm_key(x.get("name", x.get("algorithm"))) == algorithm_key(config.get("algorithm"))), None)
@@ -495,7 +500,8 @@ def normalize(config, raw):
             bus_of = {str(d.get("device", d.get("id"))): d.get("bus_id") for d in raw.get("gpu_devices", []) if isinstance(d, dict)}
             base["gpu_hs"] = [{"bus": bus_of.get(key) if isinstance(bus_of.get(key), int) else None, "hs": value}
                               for key, value in parts["gpu"].items() if key != "total" and isinstance(value, (int, float))]
-        base.update(hashrate_hs=total, algorithm=match.get("name", match.get("algorithm")), version=raw.get("miner_version"), uptime=raw.get("mining_time"), accepted=match.get("shares", {}).get("accepted"), rejected=match.get("shares", {}).get("rejected"), connected=match.get("pool", {}).get("connected"))
+        base.update(hashrate_hs=total, algorithm=match.get("name", match.get("algorithm")), version=raw.get("miner_version"), uptime=raw.get("mining_time"), accepted=match.get("shares", {}).get("accepted"), rejected=match.get("shares", {}).get("rejected"), connected=match.get("pool", {}).get("connected"),
+                    pool=match["pool"]["pool"] if isinstance(match.get("pool"), dict) and isinstance(match["pool"].get("pool"), str) and match["pool"]["pool"] else None)
     elif adapter == "cpuminer-opt":
         if "SUMMARY" in raw:
             summary = raw["SUMMARY"]
@@ -518,7 +524,7 @@ def sample(name):
     cfg = current_config(name)
     cache = {"instance": name, "observed_at": now, "sample_uptime": uptime(), "boot_id": boot_id(), "desired": s.get("desired"), "phase": s.get("phase"),
              "configured_coin": cfg.get("coin"), "configured_algorithm": cfg.get("algorithm"), "package_version": cfg.get("package_version"), "miner": cfg.get("adapter"),
-             "pool": next(iter(cfg.get("pool_urls") or []), None) if isinstance(cfg.get("pool_urls"), list) else None,
+             "pool": configured_pool(cfg, s),
              "miner_name": cfg.get("custom_name") or {"xmrig": "XMRig", "srbminer": "SRBMiner-MULTI", "cpuminer-opt": "cpuminer-opt"}.get(cfg.get("adapter"), cfg.get("adapter")),
              "process_alive": owned(s.get("child_pid"), s.get("child_start")), "screen": screen_alive(name),
              "version_id": s.get("version"), "sheet_id": s.get("sheet_id"), "sheet_name": s.get("sheet_name"),
@@ -530,6 +536,9 @@ def sample(name):
             else:
                 raw = native_stats(cfg)
             cache["stats"] = normalize(cfg, raw)
+            # The pool the miner says it is connected to (after its own failover), when it says.
+            if cache["stats"].get("pool"):
+                cache["pool"] = cache["stats"]["pool"]
             cache["stats_observed_at"] = now
             cache["stats_uptime"] = cache["sample_uptime"]
         except (subprocess.SubprocessError, ValueError, OSError) as error:
@@ -548,7 +557,70 @@ def sample(name):
 
 
 REASONS = {"stats_invalid": "统计接口无效", "pool_disconnected": "矿池断开", "low_hashrate": "算力过低",
-           "process_exit": "进程退出", "supervisor_missing": "守护进程丢失"}
+           "process_exit": "进程退出", "supervisor_missing": "守护进程丢失", "main_pool_back": "主矿池恢复"}
+
+# Failover for miners that only take one pool (cpuminer-opt). XMRig and SRBMiner-MULTI get every
+# pool on their command line and switch by themselves.
+POOL_PROBE_SECONDS = 3
+MAIN_POOL_RECHECK_SECONDS = 600
+
+
+def runtime_failover(config):
+    argv = config.get("failover_argv")
+    return isinstance(argv, list) and len(argv) > 1 and all(isinstance(a, list) and a for a in argv)
+
+
+def configured_pool(config, record):
+    pools = config.get("pool_urls") if isinstance(config.get("pool_urls"), list) else []
+    if not pools:
+        return None
+    return pools[record.get("pool_index", 0) % len(pools)] if runtime_failover(config) else pools[0]
+
+
+def pool_reachable(url, timeout=POOL_PROBE_SECONDS):
+    """Whether the pool's port accepts a TCP connection (stratum+tcp://host:port, host:port, [v6]:port)."""
+    rest = str(url).split("://", 1)[-1].split("/", 1)[0]
+    host, _, port = rest.rpartition(":")
+    if not host or not port.isdigit():
+        return False
+    try:
+        with socket.create_connection((host.strip("[]"), int(port)), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def pool_failover(name, cfg, record, reason):
+    """Before a watchdog restart: move to the next reachable pool when the current one is down.
+
+    Returns the new pool or None. A reachable pool with low hashrate is not switched away from:
+    that is a miner or hardware problem, the next pool would not help.
+    """
+    if not runtime_failover(cfg) or reason not in ("pool_disconnected", "low_hashrate", "stats_invalid"):
+        return None
+    pools = cfg.get("pool_urls") if isinstance(cfg.get("pool_urls"), list) else []
+    count = len(cfg["failover_argv"])
+    current = record.get("pool_index", 0) % count
+    if reason != "pool_disconnected" and current < len(pools) and pool_reachable(pools[current]):
+        return None
+    order = [(current + step) % count for step in range(1, count)]
+    target = next((i for i in order if i < len(pools) and pool_reachable(pools[i])), order[0])
+    update(name, pool_index=target, pool_checked_at=time.time())
+    return pools[target] if target < len(pools) else f"#{target + 1}"
+
+
+def main_pool_back(name, cfg, record, now):
+    """On a backup pool: every MAIN_POOL_RECHECK_SECONDS see whether the main pool answers again."""
+    if not runtime_failover(cfg) or not record.get("pool_index"):
+        return False
+    if now - record.get("pool_checked_at", 0) < MAIN_POOL_RECHECK_SECONDS:
+        return False
+    update(name, pool_checked_at=now)
+    pools = cfg.get("pool_urls") if isinstance(cfg.get("pool_urls"), list) else []
+    if not pools or not pool_reachable(pools[0]):
+        return False
+    update(name, pool_index=0)
+    return True
 
 
 def watchdog_once():
@@ -580,6 +652,10 @@ def watchdog_once():
                         emit("warning", "supervisor_restarted", "守护进程丢失，已重新启动矿工", name)
                         start(name, preserve=True)
                 continue
+            if main_pool_back(name, cfg, s, now):
+                emit("info", "pool_failback", f"主矿池 {configured_pool(cfg, state(name))} 恢复，切回主矿池", name)
+                restart(name, "main_pool_back")
+                continue
             policy = effective_policy(cfg)
             if policy.get("watchdog_enabled") is False or policy.get("maintenance_mode") is True:
                 if s.get("bad_reason"):
@@ -598,7 +674,11 @@ def watchdog_once():
             update(name, bad_reason=reason, bad_since=bad_since if reason else None)
             if reason and now - bad_since >= policy.get("failure_seconds", 120) and now - s.get("last_restart_at", 0) >= policy.get("cooldown_seconds", 30):
                 if budget(name, cfg, reason):
-                    emit("warning", "watchdog_restart", f"看门狗重启矿工：{REASONS.get(reason, reason)}持续 {int(now - bad_since)} 秒", name, reason=reason)
+                    switched = pool_failover(name, cfg, s, reason)
+                    if switched:
+                        emit("warning", "pool_failover", f"矿池 {configured_pool(cfg, s)} 不可用（{REASONS.get(reason, reason)}持续 {int(now - bad_since)} 秒），切换到 {switched}", name, reason=reason)
+                    else:
+                        emit("warning", "watchdog_restart", f"看门狗重启矿工：{REASONS.get(reason, reason)}持续 {int(now - bad_since)} 秒", name, reason=reason)
                     restart(name, reason)
                 elif policy.get("allow_host_reboot") is True:
                     # Reboot opt-in is explicit, persisted and rate limited across boots.
