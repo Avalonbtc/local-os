@@ -34,6 +34,7 @@ import {
   MINER_FRESH_SECONDS,
   minerStatsFresh,
   serverNow,
+  freshNow,
   useMachines,
   useRefresh,
   useFarmSettings,
@@ -208,22 +209,26 @@ function uptimeLabel(seconds?: number) {
       : `${minutes}m`;
 }
 
-// The summary bar and the list render the same rows; build them once per data refresh.
+// The summary bar and the list render the same rows; build them once per data refresh, and again
+// every 10 s without one (online/offline depends on time: when refreshes fail, rigs must age out).
 let rowCache: {
   machines?: Machine[];
   telemetry?: Observation[];
   statuses?: MachineStatus[];
+  tick?: number;
   rows: FleetRow[];
 } = {
   rows: [],
 };
 function fleetRows(machines?: Machine[], telemetry?: Observation[], statuses?: MachineStatus[]) {
-  if (rowCache.machines !== machines || rowCache.telemetry !== telemetry || rowCache.statuses !== statuses) {
+  const tick = Math.floor(freshNow() / 10000);
+  if (rowCache.machines !== machines || rowCache.telemetry !== telemetry || rowCache.statuses !== statuses || rowCache.tick !== tick) {
     const byMachine = new Map((statuses ?? []).map((status) => [status.machine_id, status]));
     rowCache = {
       machines,
       telemetry,
       statuses,
+      tick,
       rows: (machines ?? []).map((machine) => model(machine, telemetry, byMachine.get(machine.id))),
     };
   }
@@ -295,7 +300,7 @@ export function FleetSummary() {
         >
           <div className="hive-stat-line">
             <strong>{machines.data?.length ?? "—"}</strong>
-            <em>{machines.data ? rows.length - online : "—"}</em>
+            <em>{machines.data && telemetry.data ? rows.length - online : "—"}</em>
           </div>
           <span>
             <IconRig size={13} />矿机 <small>离线</small>
@@ -896,7 +901,8 @@ export function FleetPage() {
           description={telemetry.error.message}
         />
       )}
-      <QueryState loading={machines.isLoading} error={machines.error}>
+      {/* Until the first telemetry arrives every rig would read as offline: show loading. */}
+      <QueryState loading={machines.isLoading || (telemetry.isLoading && !telemetry.data)} error={machines.error}>
         {!visible.length ? (
           <div className="hive-fleet-empty">
             <Empty
