@@ -29,6 +29,42 @@ export type Data = Record<string, any>;
 let csrf = "";
 let serverOffset = 0;
 export const serverNow = () => Date.now() + serverOffset;
+/**
+ * Server time of the last telemetry that arrived. Freshness is judged against it, not the clock:
+ * data that simply has not been refreshed yet (request in flight, tab in the background, where
+ * browsers pause polling) is not mistaken for every rig going offline. A failed refresh clears
+ * it, so a dead controller still ages the rigs out in real time.
+ */
+let telemetryAt: number | undefined;
+const TELEMETRY_GRACE_MS = 15000;
+export const freshNow = () =>
+  telemetryAt === undefined ? serverNow() : Math.min(serverNow(), telemetryAt + TELEMETRY_GRACE_MS);
+const TELEMETRY_TIMEOUT_MS = 15000;
+/**
+ * Telemetry request with a deadline: a controller that stops answering must not keep the last
+ * data "fresh" forever, so a request that hangs counts as a failed refresh.
+ */
+async function telemetryFetch<T>(
+  signal: AbortSignal,
+  request: (signal: AbortSignal) => Promise<{ data?: T; error?: unknown; response: Response }>,
+) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new DOMException("Telemetry request timed out", "TimeoutError")), TELEMETRY_TIMEOUT_MS);
+  const cancel = () => controller.abort(signal.reason);
+  signal.addEventListener("abort", cancel);
+  try {
+    const data = await unwrap(request(controller.signal));
+    telemetryAt = serverNow();
+    return data;
+  } catch (error) {
+    // Cancelled by the page (unmount, newer request) is not a failure; anything else is.
+    if (!signal.aborted) telemetryAt = undefined;
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", cancel);
+  }
+}
 export const setCsrf = (value: string) => {
   csrf = value;
 };
@@ -83,10 +119,12 @@ export function useMachines() {
 export function useFleetTelemetry() {
   return useQuery({
     queryKey: ["fleet-telemetry"],
-    queryFn: ({ signal }) => unwrap(client.GET("/api/v1/telemetry", {
-      signal,
-      params: { query: { summary: true } },
-    })),
+    // Back from another tab: refresh at once instead of on the next 10 s tick.
+    refetchOnWindowFocus: true,
+    queryFn: ({ signal }) =>
+      telemetryFetch(signal, (deadline) =>
+        client.GET("/api/v1/telemetry", { signal: deadline, params: { query: { summary: true } } }),
+      ),
     staleTime: 10000,
     gcTime: 30 * 60 * 1000,
     refetchInterval: 10000,
@@ -95,9 +133,10 @@ export function useFleetTelemetry() {
 export function useTelemetry(machine_id?: string) {
   return useQuery({
     queryKey: ["telemetry", machine_id],
+    refetchOnWindowFocus: true,
     queryFn: ({ signal }) =>
-      unwrap(
-        client.GET("/api/v1/telemetry", { signal, params: { query: { machine_id, summary: !machine_id } } }),
+      telemetryFetch(signal, (deadline) =>
+        client.GET("/api/v1/telemetry", { signal: deadline, params: { query: { machine_id, summary: !machine_id } } }),
       ),
     refetchInterval: 10000,
   });
@@ -174,7 +213,7 @@ export function latest(
 export const MINER_FRESH_SECONDS = 60;
 /** The rig sampled this miner recently (process state and phase are current). */
 export function minerSampleFresh(instance: Data) {
-  return typeof instance.observed_at === "number" && serverNow() / 1000 - instance.observed_at < MINER_FRESH_SECONDS;
+  return typeof instance.observed_at === "number" && freshNow() / 1000 - instance.observed_at < MINER_FRESH_SECONDS;
 }
 /** The miner is meant to run, its process is alive and its hashrate was read recently. */
 export function minerStatsFresh(instance: Data) {
@@ -182,14 +221,14 @@ export function minerStatsFresh(instance: Data) {
     instance.desired === "running" &&
     !!instance.process_alive &&
     typeof instance.stats_observed_at === "number" &&
-    serverNow() / 1000 - instance.stats_observed_at < MINER_FRESH_SECONDS
+    freshNow() / 1000 - instance.stats_observed_at < MINER_FRESH_SECONDS
   );
 }
 export function isFresh(o: Observation | undefined, seconds = 35) {
   return (
     !!o &&
     !o.error &&
-    serverNow() - new Date(o.observed_at).getTime() < seconds * 1000
+    freshNow() - new Date(o.observed_at).getTime() < seconds * 1000
   );
 }
 export function measuredPower(

@@ -76,3 +76,31 @@ test("icon library: bundled, letter, upload, link and CoinGecko through the cont
   await expect(kas).toContainText("CoinGecko");
   expect(external.filter((u) => /coingecko|example\.com/.test(u))).toEqual([]);
 });
+
+test("the icon list is remembered, so library icons show at once on the next visit", async ({ page }) => {
+  let delay: Promise<void> | undefined;
+  const icons = [{ symbol: "TSC", source: "coingecko", content_type: "image/png", source_ref: "tsc", updated_at: "2026-10-20T00:00:00Z" }];
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    let body: unknown = [];
+    if (path.endsWith("/me")) body = { actor: { id: "a", name: "fixture", token_id: null }, csrf: "t", expires_at: "2099-01-01" };
+    if (path.endsWith("/settings/farm")) body = { electricity_price: 0.42 };
+    if (path.endsWith("/catalog/wallets")) body = [{ id: "w0", kind: "wallets", name: "TSC 钱包", revision: 1, data: { coin_symbol: "TSC", address: "a" } }];
+    if (path === "/api/v1/coin-icons") {
+      if (delay) await delay;
+      body = { icons, directory: null, search: true };
+    }
+    if (/^\/api\/v1\/coin-icons\/TSC$/.test(path)) return route.fulfill({ status: 200, contentType: "image/png", body: PNG });
+    await route.fulfill({ json: body });
+  });
+  await page.goto("/wallets");
+  const tsc = page.locator(".catalog-table img.rd-coin-img[alt=TSC]");
+  await expect(tsc).toHaveAttribute("src", /\/api\/v1\/coin-icons\/TSC\?v=/);
+  // Next visit: the controller is slow to answer the list, the remembered one is used meanwhile.
+  let release!: () => void;
+  delay = new Promise<void>((resolve) => (release = resolve));
+  await page.reload();
+  await expect(tsc).toHaveAttribute("src", /\/api\/v1\/coin-icons\/TSC\?v=/, { timeout: 1500 });
+  await expect(page.locator(".catalog-table .rd-coin[title=TSC]")).toHaveCount(0);
+  release();
+});

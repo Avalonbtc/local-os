@@ -133,7 +133,18 @@ pub fn router(state: ApiState, static_dir: &str) -> Router {
         .layer(DefaultBodyLimit::max(1024 * 1024))
         .layer(middleware::from_fn(
             |request: Request, next: Next| async move {
+                let path = request.uri().path().to_owned();
                 let mut response = next.run(request).await;
+                let content_type = response
+                    .headers()
+                    .get(axum::http::header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok());
+                if let Some(cache) = static_cache_control(&path, response.status(), content_type) {
+                    response.headers_mut().insert(
+                        axum::http::header::CACHE_CONTROL,
+                        axum::http::HeaderValue::from_static(cache),
+                    );
+                }
                 response.headers_mut().insert(
                     "x-rigdeck-time",
                     chrono::Utc::now()
@@ -596,16 +607,49 @@ async fn coin_search(
 ) -> ApiResult<Json<Vec<CoinCandidate>>> {
     Ok(Json(s.app.search_coins(&q.q).await?))
 }
+/// Cache policy for the console's own files. Vite build assets carry a content hash in their
+/// name (bundled coin icons included), so browsers keep them; index.html is revalidated so a new
+/// build is picked up at once. API responses set their own headers.
+fn static_cache_control(
+    path: &str,
+    status: StatusCode,
+    content_type: Option<&str>,
+) -> Option<&'static str> {
+    if !status.is_success() || path.starts_with("/api/") {
+        None
+    } else if path.starts_with("/assets/") {
+        Some("public, max-age=31536000, immutable")
+    } else if content_type.is_some_and(|t| t.starts_with("text/html")) {
+        Some("no-cache")
+    } else {
+        None
+    }
+}
+/// A coin icon URL with the console's `?v=<updated_at>` never changes content.
+fn coin_icon_cache_control(versioned: bool) -> &'static str {
+    if versioned {
+        "private, max-age=31536000, immutable"
+    } else {
+        "private, max-age=300"
+    }
+}
+#[derive(Deserialize)]
+struct CoinIconQuery {
+    /// The console adds the icon's update time; such a URL never changes content.
+    v: Option<String>,
+}
 /// The image itself. SVG is served with a sandboxing CSP so opening it directly cannot run script.
-async fn coin_icon(State(s): State<ApiState>, Path(symbol): Path<String>) -> ApiResult<Response> {
+async fn coin_icon(
+    State(s): State<ApiState>,
+    Path(symbol): Path<String>,
+    Query(q): Query<CoinIconQuery>,
+) -> ApiResult<Response> {
     let (icon, bytes) = s.app.coin_icon(&symbol).await?;
+    let cache = coin_icon_cache_control(q.v.is_some());
     Ok((
         [
             (axum::http::header::CONTENT_TYPE, icon.content_type),
-            (
-                axum::http::header::CACHE_CONTROL,
-                "private, max-age=300".into(),
-            ),
+            (axum::http::header::CACHE_CONTROL, cache.into()),
             (
                 axum::http::header::CONTENT_SECURITY_POLICY,
                 "default-src 'none'; style-src 'unsafe-inline'; sandbox".into(),
@@ -817,5 +861,49 @@ mod login_source_tests {
         assert_eq!(login_source(&h, peer, true), "203.0.113.2");
         h.insert("cf-connecting-ip", "invalid".parse().unwrap());
         assert_eq!(login_source(&h, peer, true), "127.0.0.1");
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    #[test]
+    fn hashed_assets_are_kept_and_the_page_is_revalidated() {
+        let ok = StatusCode::OK;
+        assert_eq!(
+            static_cache_control("/assets/index-zzhu_Iyx.js", ok, Some("text/javascript")),
+            Some("public, max-age=31536000, immutable")
+        );
+        assert_eq!(
+            static_cache_control("/assets/xmr-B1c2.svg", ok, Some("image/svg+xml")),
+            Some("public, max-age=31536000, immutable")
+        );
+        assert_eq!(
+            static_cache_control("/", ok, Some("text/html; charset=utf-8")),
+            Some("no-cache")
+        );
+        assert_eq!(
+            static_cache_control("/machines/x", ok, Some("text/html")),
+            Some("no-cache")
+        );
+        assert_eq!(
+            static_cache_control("/favicon.svg", ok, Some("image/svg+xml")),
+            None
+        );
+        assert_eq!(
+            static_cache_control("/api/v1/machines", ok, Some("application/json")),
+            None
+        );
+        assert_eq!(
+            static_cache_control("/assets/missing.js", StatusCode::NOT_FOUND, None),
+            None
+        );
+    }
+
+    #[test]
+    fn versioned_coin_icons_are_kept() {
+        assert!(coin_icon_cache_control(true).contains("immutable"));
+        assert_eq!(coin_icon_cache_control(false), "private, max-age=300");
     }
 }

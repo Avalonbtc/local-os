@@ -83,6 +83,8 @@ export function MachineDetail() {
         <Alert type="info" message="未找到机器" />
       </QueryState>
     );
+  // Before the first sample the header would say "离线"; wait for it instead.
+  if (telemetry.isLoading && !telemetry.data) return <Spin style={{ display: "block", margin: 60 }} />;
   const overview = (
     <>
       <MinerPanel instances={instances} />

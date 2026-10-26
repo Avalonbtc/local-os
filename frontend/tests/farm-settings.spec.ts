@@ -4,6 +4,7 @@ import { test, expect } from "@playwright/test";
 test("electricity price is a farm setting used by the daily cost estimate", async ({ page }) => {
   const id = "8d0f4c2e-5b7a-4e19-a3c6-1f2e9d8b7a60";
   let price = 1;
+  const alerts = { local_offline_minutes: 2, pool_offline_minutes: 10, pool_check: true, popup: true, proxies: [] };
   const saved: unknown[] = [];
   await page.route("**/api/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -12,7 +13,8 @@ test("electricity price is a farm setting used by the daily cost estimate", asyn
         saved.push(route.request().postDataJSON());
         price = (saved.at(-1) as { electricity_price: number }).electricity_price;
       }
-      return route.fulfill({ json: { electricity_price: price } });
+      // The server always returns the alert settings too (required fields in the form).
+      return route.fulfill({ json: { electricity_price: price, alerts } });
     }
     let body: unknown = [];
     if (path.endsWith("/me")) body = { actor: { id, name: "fixture", token_id: null }, csrf: "test", expires_at: "2099-01-01" };
@@ -35,7 +37,8 @@ test("electricity price is a farm setting used by the daily cost estimate", asyn
   await expect(input).toHaveValue("1.0000");
   await input.fill("0.35");
   await page.getByRole("button", { name: /保\s*存/ }).click();
-  await expect.poll(() => saved).toEqual([{ electricity_price: 0.35 }]);
+  await expect.poll(() => saved.length).toBe(1);
+  expect(saved[0]).toMatchObject({ electricity_price: 0.35, alerts: { local_offline_minutes: 2, pool_offline_minutes: 10 } });
 
   await page.locator('nav.rd-tabs a[href="/machines"]').click();
   // 0.5 kW × 24 h × 0.35 元/度

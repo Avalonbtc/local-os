@@ -19,10 +19,34 @@ const bundled: Record<string, string> = Object.fromEntries(
 
 export const hasBundledIcon = (coin: string) => coin.toUpperCase() in bundled;
 
+const ICON_LIST_KEY = "rigdeck:coin-icons";
+function rememberedIcons(): CoinIconList | undefined {
+  try {
+    const saved = JSON.parse(localStorage.getItem(ICON_LIST_KEY) ?? "null");
+    return saved && Array.isArray(saved.icons) ? saved : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The controller's icon list. The last list is remembered in the browser so icons show at once
+ * when a page opens (no letter badge first); it is refreshed in the background right away.
+ */
 export function useCoinIcons() {
   return useQuery<CoinIconList>({
     queryKey: ["coin-icons"],
-    queryFn: ({ signal }) => unwrap(client.GET("/api/v1/coin-icons", { signal })),
+    queryFn: async ({ signal }) => {
+      const list = await unwrap(client.GET("/api/v1/coin-icons", { signal }));
+      try {
+        localStorage.setItem(ICON_LIST_KEY, JSON.stringify(list));
+      } catch {
+        // Private mode or full storage: icons still load, just not instantly next time.
+      }
+      return list;
+    },
+    initialData: rememberedIcons,
+    initialDataUpdatedAt: 0,
     staleTime: 5 * 60 * 1000,
   });
 }
